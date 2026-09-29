@@ -58,7 +58,7 @@ export function restorePiRuntimeAssembly(request: RuntimeAssemblyRequest, tools:
   if (computePiAssemblyId(request.components, tools) !== request.id) throw new Error("Pi runtime contract does not match its ID");
   const component = { ...host, displayName: "Pi core", tools: [...names] };
   const assembly: PiRuntimeAssembly = {
-    id: request.id, displayName: "Pi core + billion-context-pi:dist (local)", host: component,
+    id: request.id, displayName: "Pi Agent", host: component,
     plugins: [], components: [component], tools, request,
     handshake: { host: "pi", hostVersion: host.version, runtimeVersion: PI_REMOTE_RUNTIME_VERSION, requestedTools: [...names], assembly: request, validateReady: (ready) => validatePiReadyMessage(assembly, ready) },
     workerBundle: { cacheNamespace: "pi-bcp-v1", companionArtifacts: [{ id: "photon", filePrefix: "photon-wasm", executableName: "photon_rs_bg.wasm" }] },
