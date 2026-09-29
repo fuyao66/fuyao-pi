@@ -1,0 +1,40 @@
+{
+  "name": "pi-ssh-remote-workspace",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent Pi SSH Remote development workspace",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "build:pi": "bun scripts/build.ts pi",
+    "build:pi-worker:arm64": "bun scripts/compile-pi-worker.ts arm64",
+    "build:pi-worker:x64": "bun scripts/compile-pi-worker.ts x64",
+    "build:pi-worker:all": "bun scripts/compile-pi-worker.ts arm64 && bun scripts/compile-pi-worker.ts x64",
+    "benchmark:pi": "bun scripts/benchmark-remote.ts pi",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun run build && bun test"
+  },
+  "dependencies": {
+    "@cortexkit/aft-pi": ">=0.52.0",
+    "@earendil-works/pi-agent-core": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1",
+    "@ff-labs/fff-bin-linux-arm64-gnu": "0.10.6",
+    "@ff-labs/fff-bin-linux-x64-gnu": "0.10.6",
+    "@ff-labs/fff-bun": "0.10.6",
+    "@ff-labs/pi-fff": "0.10.6",
+    "diff": "8.0.4",
+    "pi-rtk-optimizer": "0.9.0",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5.8.0"
+  }
+}
