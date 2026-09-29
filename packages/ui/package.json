@@ -1,0 +1,46 @@
+{
+  "name": "pi-sakura-cyberdeck",
+  "version": "1.1.5",
+  "private": true,
+  "repository": { "type": "git", "url": "https://github.com/fuyao66/fuyao-pi.git", "directory": "packages/ui" },
+  "description": "Sakura Macaron visual pack for Pi: theme, cyberdeck header, matrix rain, macaron Zentui chrome, dual-quota chips, Claude-style shimmer.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-theme",
+    "pi-extension",
+    "tui",
+    "sakura"
+  ],
+  "files": [
+    "extensions",
+    "themes",
+    "licenses",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-ai": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/header/index.ts",
+      "./extensions/matrix/index.ts",
+      "./extensions/zentui/index.ts",
+      "./extensions/dual-quota/index.ts",
+      "./extensions/claude-shimmer/index.ts"
+    ],
+    "themes": [
+      "./themes/sakura-macaron.json"
+    ]
+  }
+}

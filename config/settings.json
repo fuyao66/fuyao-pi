@@ -1,0 +1,9 @@
+{
+  "theme": "sakura-macaron",
+  "tuiMode": "regular",
+  "defaultThinkingLevel": "high",
+  "showCacheMissNotices": true,
+  "compaction": { "enabled": false },
+  "httpIdleTimeoutMs": 60000,
+  "retry": { "enabled": true, "maxRetries": 20, "baseDelayMs": 2000 }
+}

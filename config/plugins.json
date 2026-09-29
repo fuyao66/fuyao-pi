@@ -1,0 +1,12 @@
+{
+  "piVersion": "0.87.1",
+  "packages": [
+    "npm:billion-context-pi@0.1.82",
+    "npm:@juicesharp/rpiv-ask-user-question@2.11.0",
+    "npm:@juicesharp/rpiv-todo@2.11.0",
+    "npm:pi-web-access@0.33.0",
+    "git:https://github.com/tjp72/pi-billion-memory.git@52e5a01c62df4d40421b93da4528c9e969061c46",
+    "npm:@schovest/pi-goal@0.2.0",
+    "npm:pi-invisible-continue@0.3.13"
+  ]
+}
