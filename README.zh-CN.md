@@ -2,7 +2,7 @@
 
 扶摇个人的 **Pi agent 体系仓库**：管理自研插件、第三方插件依赖和可复用配置。不是 Pi 本体的 fork，也不再仅仅是 SSH 插件仓库。
 
-在原 `pi-ssh-remote` 仓库上演进，保留 Git 历史。**remote-ssh 是这套体系中的一个自研插件**，保留独立包身份与运行协议。第三方插件通常只记录来源和版本；**UI 是明确的例外**：Sakura Cyberdeck 源码纳入本仓库供个人定制，保留许可证和上游归属。
+在原 `pi-ssh-remote` 仓库上演进，保留 Git 历史。**remote-ssh 是这套体系中的一个自研插件**，保留独立包身份与运行协议。第三方插件通常只记录来源和版本；**UI 和 Advisor 是明确的例外**：Sakura Cyberdeck 源码供个人定制，RPIV Advisor 源码用于适配 BCP，均保留许可证和上游归属。
 
 [English](README.md) · [插件清单](docs/plugins.md) · [配置与迁移](docs/configuration.md)
 
@@ -11,6 +11,7 @@
 ```text
 packages/remote-ssh/    自研 SSH 插件：源码、测试、构建脚本
 packages/ui/            可定制的 Sakura Cyberdeck 派生源码及许可证
+packages/advisor/       RPIV Advisor 派生源码：使用 BCP 处理后的上下文
 config/plugins.json    第三方插件来源，固定版本 / Git 提交
 config/settings.json   可公开的个人配置，不含模型与凭证
 scripts/setup.ts       预览 / 应用个人配置
@@ -44,9 +45,9 @@ pi update --extensions
 ACP_AUTO_UPDATE=0 pi
 ```
 
-安装脚本保留已有偏好、模型选择、资源路径、额外插件和第三方资源过滤规则（被替换的外部 UI 声明除外）；受管理插件按本仓库版本固定。不会读取或复制 `auth.json`、`models.json`、联网凭证、会话和 SSH 私钥，也不会自动下载依赖。
+安装脚本保留已有偏好、模型选择、资源路径、额外插件和第三方资源过滤规则（被替换的外部 UI / RPIV Advisor 包声明除外）；受管理插件按本仓库版本固定。不会读取或复制 `auth.json`、`models.json`、联网凭证、会话和 SSH 私钥，也不会自动下载依赖。
 
-可用 `--agent-dir /路径` 指定另一套配置，启动时相应设置 `PI_CODING_AGENT_DIR=/路径`。**支持的安装方式是 clone 后构建**；直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会构建 worker，也不会配置第三方插件。根 Pi manifest 暴露自研资源和仓库内 UI，完整组合由 setup 管理。
+可用 `--agent-dir /路径` 指定另一套配置，启动时相应设置 `PI_CODING_AGENT_DIR=/路径`。**支持的安装方式是 clone 后构建**；直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会构建 worker，也不会配置第三方插件。根 Pi manifest 暴露自研资源和仓库内 UI / Advisor，完整组合由 setup 管理。
 
 ## 远程工作区
 
@@ -71,6 +72,12 @@ Smoke 不等同于真实 SSH 服务器或模型 API 测试；ARM64 需另行运�
 ## 自定义 UI
 
 直接修改 [`packages/ui/`](packages/ui/UPSTREAM.md)。根包加载其中五个扩展入口和主题；setup 会替换旧的外部 UI 包声明，避免重复加载原型补丁。以后由本仓库维护源码，不自动跟随上游覆盖。本次迁移尚未改变 UI 视觉/交互逻辑；静态检查不能替代终端交互验证。
+
+## Advisor 与 BCP
+
+[`packages/advisor/`](packages/advisor/UPSTREAM.md) 保留 `/advisor` 模型选择器和无参数咨询工具，但不再从日志重建原始历史；读取 BCP 处理后的请求快照。必须单独调用 Advisor，不能和 `compress` 或其他工具同批；压缩后等待下一轮上下文刷新再咨询。没有新鲜快照就报错，绝不回退到原始日志。
+
+重启后用 `/advisor` 选择模型；仓库不预设审核模型，不上传本地选择或凭证。Advisor 无工具，不读取本地或远端文件；咨询单独计费。快照不包含后续 provider 专用请求变换，不保证自动适配更小的审核模型窗口。完整边界见来源文档。
 
 ## 隐私与配置原则
 

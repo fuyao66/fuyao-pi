@@ -41,10 +41,12 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     root, resolve(root, "packages/remote-ssh"), resolve(root, "packages/pi"),
     legacyRoot, resolve(legacyRoot, "packages/pi"), resolve(legacyRoot, "packages/remote-ssh"),
   ].map(identity));
-  // UI is maintained in-tree; remove the upstream declaration to avoid duplicate patches/themes.
+  // UI and Advisor are maintained in-tree; avoid duplicate patches/tools/commands.
   const replacedIds = new Set([
     "git:https://github.com/beautifulrem/pi-sakura-cyberdeck.git", "npm:pi-sakura-cyberdeck",
     resolve(root, "packages/ui"), resolve(legacyRoot, "packages/ui"),
+    "npm:@juicesharp/rpiv-advisor", "npm:@fuyao/pi-advisor",
+    resolve(root, "packages/advisor"), resolve(legacyRoot, "packages/advisor"),
   ].map(identity));
   const managedIds = new Set(sources.map(identity));
   const findOld = (source: string) => old.find((e) => identity(sourceOf(e)) === identity(source));
@@ -76,7 +78,7 @@ export async function setup(agentDir: string, apply: boolean, root = repoRoot): 
   const next = mergeProfile(existing, defaults, manifest.packages, root, agentDir);
   const changed = JSON.stringify(existing) !== JSON.stringify(next);
   console.log(`${apply ? "Apply" : "Preview"}: ${target}`);
-  console.log("Managed packages (unrelated packages/preferences preserved; upstream Sakura UI replaced by in-repo UI):");
+  console.log("Managed packages (unrelated packages/preferences preserved; upstream Sakura UI / RPIV Advisor replaced by in-repo forks):");
   for (const source of [manifest.packages[0], root, ...manifest.packages.slice(1)]) console.log(`  ${source}`);
   if (!apply || !changed) {
     console.log(changed ? "No files changed. Use --apply after reviewing the profile." : "Profile already configured.");

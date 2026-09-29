@@ -9,5 +9,5 @@
     "types": ["bun"],
     "allowImportingTsExtensions": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/scripts/**/*.ts", "packages/*/test/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+  "include": ["packages/advisor/**/*.ts", "packages/*/src/**/*.ts", "packages/*/scripts/**/*.ts", "packages/*/test/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
 }

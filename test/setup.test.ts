@@ -43,6 +43,11 @@ describe("personal Pi profile", () => {
     expect(result.packages).toEqual([sources[0], root, sources[1]]);
   });
 
+  test("replaces upstream and standalone Advisor declarations without duplicates", () => {
+    const packages = ["npm:@juicesharp/rpiv-advisor@2.11.0", { source: "npm:@fuyao/pi-advisor", extensions: [] }, `${root}/packages/advisor`, "/workspace/pi-ssh-remote/packages/advisor"];
+    expect(mergeProfile({ packages }, {}, sources, root, agentDir).packages).toEqual([sources[0], root, sources[1]]);
+  });
+
   test("preserves filters on the root package when setup is rerun", () => {
     const filtered = { source: root, extensions: ["!packages/ui/extensions/matrix/index.ts"], themes: [] };
     const result = mergeProfile({ packages: [filtered] }, {}, sources, root, agentDir);
