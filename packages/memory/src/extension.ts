@@ -52,7 +52,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { hash, loadEmbeddingConfig } from "./embeddings.js";
-import { HybridMemory } from "./hybrid.js";
+import { HybridMemory, ensureVectorSchema } from "./hybrid.js";
 import { AutoEmbed } from "./auto-embed.js";
 import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
 import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
@@ -795,6 +795,24 @@ export class MemoryDb {
       this.db.exec("UPDATE source_watermarks SET last_mtime_ms = 0, last_size = 0;");
       logLine("migrated blocks.msg_ids; watermark ledger reset once for pointer backfill");
     }
+    // Install vector invalidation before the startup scan, even before HybridMemory
+    // is constructed; existing vector tables must not retain revised content.
+    if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_vectors'").get()) ensureVectorSchema(this);
+    // One-time revision-sync migration: re-read sources indexed by older builds.
+    this.db.exec("CREATE TABLE IF NOT EXISTS memory_migrations (name TEXT PRIMARY KEY)");
+    if (!this.db.prepare("SELECT 1 FROM memory_migrations WHERE name='summary-revisions-v1'").get()) {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.exec("UPDATE source_watermarks SET last_mtime_ms=0,last_size=0");
+        this.db.prepare("INSERT OR IGNORE INTO memory_migrations VALUES(?)").run("summary-revisions-v1");
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    }
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS blocks_au AFTER UPDATE OF summary,topic ON blocks
+      WHEN old.summary IS NOT new.summary OR old.topic IS NOT new.topic BEGIN
+        INSERT INTO blocks_fts(blocks_fts,rowid,summary,topic) VALUES('delete',old.id,old.summary,coalesce(old.topic,''));
+        INSERT INTO blocks_fts(rowid,summary,topic) VALUES(new.id,new.summary,coalesce(new.topic,''));
+      END;`);
     const trig = this.db
       .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='trigger' AND name IN ('blocks_ai','blocks_ad')")
       .get();
@@ -974,15 +992,12 @@ export class MemoryDb {
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE NOT EXISTS (SELECT 1 FROM block_tombstones WHERE source_file = ? AND block_id = ?)`,
       );
-      // INSERT OR IGNORE leaves existing rows alone, so refresh the pointer column separately —
-      // including back to NULL, because a sidecar that re-emits a block_id without references must
-      // not leave stale pointers behind (they would expand to messages the block no longer covers).
-      // Only msg_ids changes, which keeps the FTS external-content table valid. `IS NOT` is
-      // SQLite's null-safe comparison, so an unchanged value still reports 0 change.
-      const updMsgIds = this.db.prepare(
-        `UPDATE blocks SET msg_ids = ?
-          WHERE source_file = ? AND block_id = ? AND (msg_ids IS NOT ?)`,
-      );
+      // Keep the row ID (vector/reference identity) stable; compare all normalized
+      // fields so no-op scans do not publish writes or invalidate derived indexes.
+      const fields = ["kind", "run_id", "tier", "topic", "summary", "ref_start", "ref_end", "compressed_tokens", "created_at", "msg_ids"];
+      const update = this.db.prepare(`UPDATE blocks SET ${fields.map(f => `${f}=?`).join(",")}
+        WHERE source_file=? AND block_id=? AND (${fields.map(f => `${f} IS NOT ?`).join(" OR ")})
+        AND NOT EXISTS (SELECT 1 FROM block_tombstones WHERE source_file=? AND block_id=?)`);
       for (const b of blocks) {
         if (!b || typeof b.summary !== "string") continue;
         const redactedSummary = redactSecrets(b.summary);
@@ -1010,11 +1025,14 @@ export class MemoryDb {
           sourceFile,
           b.blockId,
         );
-        if (r.changes > 0) {
-          inserted++;
+        const values = [kind, b.runId, b.tier, redactedTopic.text, summary, b.refStart, b.refEnd, b.compressedTokens, b.createdAt, msgIdsJson];
+        const changed = r.changes > 0 ? 0 : update.run(...values, sourceFile, b.blockId, ...values, sourceFile, b.blockId).changes;
+        if (r.changes > 0) inserted++;
+        if (changed > 0) refreshed++;
+        if (r.changes > 0 || changed > 0) {
           if (savedRecords.length >= 80) savedRecords.shift();
           savedRecords.push({ identity: hash(JSON.stringify([sourceFile, kind, b.blockId])), blockId: b.blockId, project, topic: redactedTopic.text, summary });
-        } else if (updMsgIds.run(msgIdsJson, sourceFile, b.blockId, msgIdsJson).changes > 0) refreshed++;
+        }
       }
       this.db.exec("COMMIT");
     } catch (e) {
@@ -1025,7 +1043,7 @@ export class MemoryDb {
       }
       return { ok: false, parsed: true, total: blocks.length, inserted: 0, mtimeMs, size, error: e.message };
     }
-    if (savedRecords.length) { try { onStored?.(savedRecords, inserted); } catch { /* Display never breaks storage. */ } }
+    if (savedRecords.length) { try { onStored?.(savedRecords, inserted + refreshed); } catch { /* Display never breaks storage. */ } }
     if (redactedHits > 0) {
       logLine(`redacted ${redactedHits} potential secret(s) before storing ${path.basename(sourceFile)}`);
     }

@@ -13,6 +13,10 @@ export function ensureVectorSchema(store: Store): void {
   CREATE TABLE IF NOT EXISTS memory_embedding_lease (
     id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, expires_at INTEGER NOT NULL
   );
+  CREATE TRIGGER IF NOT EXISTS memory_vectors_update AFTER UPDATE OF summary,topic ON blocks
+    WHEN old.summary IS NOT new.summary OR old.topic IS NOT new.topic BEGIN
+    DELETE FROM memory_vectors WHERE block_id=old.id;
+  END;
   CREATE TRIGGER IF NOT EXISTS memory_vectors_delete AFTER DELETE ON blocks BEGIN
     DELETE FROM memory_vectors WHERE block_id = old.id;
   END;`);

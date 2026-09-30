@@ -509,8 +509,8 @@ const migRow = migDb.db
   .prepare("SELECT last_mtime_ms, last_size FROM source_watermarks WHERE source_file = ?")
   .get("/home/dev/ProjX/session.jsonl.acp.json");
 check(
-  "migration backfills the watermark ledger from sources",
-  migRow && migRow.last_mtime_ms === 123 && migRow.last_size === 456,
+  "migration backfills the watermark ledger and schedules revision rescan",
+  migRow && migRow.last_mtime_ms === 0 && migRow.last_size === 0,
 );
 migDb.close();
 
