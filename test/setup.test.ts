@@ -48,6 +48,13 @@ describe("personal Pi profile", () => {
     expect(mergeProfile({ packages }, {}, sources, root, agentDir).packages).toEqual([sources[0], root, sources[1]]);
   });
 
+  test("replaces Memory git aliases and standalone fork without duplicate tools", () => {
+    const packages = ["git:https://github.com/tjp72/pi-billion-memory.git@52e5a01", "git:github.com/tjp72/pi-billion-memory", "git@github.com:tjp72/pi-billion-memory.git", "npm:@fuyao/pi-memory", `${root}/packages/memory`, "npm:unrelated"];
+    const result = mergeProfile({ packages }, {}, sources, root, agentDir);
+    expect(result.packages).toEqual([sources[0], root, sources[1], "npm:unrelated"]);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+  });
+
   test("preserves filters on the root package when setup is rerun", () => {
     const filtered = { source: root, extensions: ["!packages/ui/extensions/matrix/index.ts"], themes: [] };
     const result = mergeProfile({ packages: [filtered] }, {}, sources, root, agentDir);

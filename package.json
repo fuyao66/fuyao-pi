@@ -10,6 +10,7 @@
     "extensions": [
       "./packages/remote-ssh/dist/pi-extension.js",
       "./packages/advisor/index.ts",
+      "./packages/memory/src/index.ts",
       "./packages/ui/extensions/header/index.ts",
       "./packages/ui/extensions/matrix/index.ts",
       "./packages/ui/extensions/zentui/index.ts",
@@ -34,9 +35,10 @@
     "smoke:pi": "bun packages/remote-ssh/scripts/smoke-fixed-stack.ts",
     "benchmark:pi": "bun packages/remote-ssh/scripts/benchmark-remote.ts pi",
     "check:ui": "node packages/ui/scripts/check.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "check": "bun run typecheck && bun run build && bun run check:ui && bun test"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/memory/tsconfig.json",
+    "test:memory": "FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx packages/memory/tests/self-test.test.ts && FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx --test packages/memory/tests/hybrid.test.ts",
+    "test": "bun test ./test ./packages/advisor/test ./packages/remote-ssh/test && bun run test:memory",
+    "check": "bun run typecheck && bun run build && bun run check:ui && bun run test"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.87.1",
@@ -47,6 +49,8 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.0",
     "billion-context-pi": "0.1.82",
     "typescript": "^5.8.0"
   }

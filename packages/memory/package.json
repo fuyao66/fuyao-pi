@@ -1,0 +1,15 @@
+{
+  "name": "@fuyao/pi-memory",
+  "version": "0.5.3-fuyao.1",
+  "private": true,
+  "type": "module",
+  "description": "BCP memory enhancement derived from pi-billion-memory: lexical and opt-in embedding retrieval",
+  "license": "MIT",
+  "pi": { "extensions": ["./src/index.ts"] },
+  "engines": { "node": ">=22.19.0" },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx tests/self-test.test.ts && FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx --test tests/hybrid.test.ts"
+  }
+}
