@@ -2,9 +2,7 @@
 
 [文档导航](README.md) · [系统架构](architecture.md) · [维护指南](maintenance.md)
 
-这些能力共同组成 fuyao-pi，不存在以 SSH 为主体、其余插件为附件的层级关系。按维护责任区分为：自研源码、本地维护的派生源码、固定版本的上游引用。上游 Pi core 0.87.1 是底座，不计作本仓库自研插件。
-
-配套插件的可执行版本清单是 [`config/plugins.json`](../config/plugins.json)；本地扩展入口由根 [`package.json`](../package.json) 声明。UI、Advisor 和 Memory 的派生源码是为了实际定制/适配而维护，不是复制上游插件合集。
+运行基线为 Pi core 0.87.1。配套插件版本见 [`config/plugins.json`](../config/plugins.json)，本地扩展入口见根 [`package.json`](../package.json)。
 
 ## 自研
 
@@ -12,11 +10,11 @@
 | --- | --- | --- |
 | remote-ssh | [`packages/remote-ssh`](../packages/remote-ssh) | Pi 核心工作区工具远端执行、BCP delegate 连接继承、本地/远端边界 |
 
-`remote-ssh` 目录内保留包名 `pi-ssh-remote`，避免把仓库重命名与包身份、运行时 Symbol、部署缓存命名混为一谈。当前为 private 包，没有自动发布 npm。
+包名为 `pi-ssh-remote`，当前为 private workspace 包。
 
 ## 本地维护的 UI 派生源码
 
-[`packages/ui`](../packages/ui/UPSTREAM.md) 从 `beautifulrem/pi-sakura-cyberdeck` 1.1.5 / `16c065c` 导入，保留原始许可证和上游署名，供个人 UI 定制。根 Pi manifest 加载五个扩展和 sakura-macaron 主题，不再声明外部 Sakura 包。它不是自研原创，源码由本仓库维护。
+[`packages/ui`](../packages/ui/UPSTREAM.md) 从 `beautifulrem/pi-sakura-cyberdeck` 1.1.5 / `16c065c` 导入，保留原始许可证和上游署名，供个人 UI 定制。根 Pi manifest 加载五个扩展和 sakura-macaron 主题，不再声明外部 Sakura 包。源码由本仓库维护。
 
 ## 本地维护的 Advisor 派生源码
 
@@ -41,4 +39,4 @@ Git 源固定完整提交，npm 源固定已安装版本。版本固定不是安
 
 ## 添加与升级
 
-流程集中在[维护指南](maintenance.md)，避免每个页面复制一套步骤。核心原则：可直接使用的第三方功能优先引用；必要派生源码保留归属；本地扩展加入根 manifest；升级 Pi/BCP 要同时验证上下文、记忆和远端桥接边界。根包与上游/独立子包不要重复加载。
+见[维护指南](maintenance.md)。根包与对应的上游/独立子包不要重复加载。

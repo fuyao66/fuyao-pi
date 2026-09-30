@@ -2,13 +2,13 @@
 
 [文档导航](README.md) · [系统架构](architecture.md) · [维护指南](maintenance.md)
 
-本页管理的是整套个人 Pi Agent 环境，而不是单独安装 remote-ssh。快速开始见[根 README](../README.zh-CN.md)。
+快速开始见[根 README](../README.zh-CN.md)。
 
 ## 安装产物与步骤
 
 | 步骤 | 实际作用 |
 | --- | --- |
-| 安装固定版本 Pi CLI | 获得上游 `pi` 命令，不生成 `fuyao-pi` 命令 |
+| 安装固定版本 Pi CLI | 安装上游 `pi` 命令 |
 | `bun install --frozen-lockfile` | 安装本仓库工作区依赖 |
 | `bun run check` | 类型检查、构建本地 SSH 扩展、UI 静态检查与测试；不编译远端 worker |
 | `bun run setup` / `--apply` | 预览或备份合并 Pi 包声明和公开默认值 |

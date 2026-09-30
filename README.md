@@ -1,8 +1,6 @@
 # fuyao-pi
 
-**Fuyao's personal Pi Agent environment.** This repository assembles an upstream Pi runtime, locally maintained extensions, a pinned companion-plugin profile and portable settings into one maintainable workspace.
-
-The project is **not a Pi core fork, a standalone agent CLI, or an SSH-plugin-only repository**. Remote SSH execution is one capability of the environment, alongside a customizable terminal UI, BCP-compatible review and cross-session project memory.
+Personal Pi Agent environment with customized extensions and configuration.
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Architecture](docs/architecture.md) · [Maintenance](docs/maintenance.md)
 
@@ -17,22 +15,6 @@ The project is **not a Pi core fork, a standalone agent CLI, or an SSH-plugin-on
 | Project memory | [`packages/memory`](packages/memory/README.md) | Cross-session summary search, workspace scope and optional embeddings |
 | Remote workspace | [`packages/remote-ssh`](packages/remote-ssh/README.md) | Run core workspace tools over SSH while keeping orchestration local |
 | Companion tools | [`config/plugins.json`](config/plugins.json) | Pinned question, task, web, goal and continuation extensions |
-
-```text
-Upstream Pi + pinned BCP
-          │
-          ├── fuyao-pi root manifest
-          │     ├── UI
-          │     ├── Advisor
-          │     ├── Memory
-          │     └── Remote SSH ──→ model-free remote worker
-          │
-          └── pinned companion plugins
-
-Local-only state: credentials, model settings, sessions, memory DB and SSH keys
-```
-
-This is source and integration configuration, not a backup of private runtime state. Pinned dependencies improve repeatability; they do not make external providers, platform behavior or every plugin configuration reproducible.
 
 ## Quick start
 
@@ -62,16 +44,16 @@ bun run smoke:pi
 
 Configure model access separately in your local Pi environment. Advisor model selection and Memory embedding service credentials are not supplied by this repository. For a custom agent directory, use the same `PI_CODING_AGENT_DIR` for setup, update and launch; some plugin-specific state still uses fixed home-directory paths.
 
-**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Load the root package once, not the root and each child package together. This repository does not provide a separate `fuyao-pi` executable.
+**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Load the root package once, not the root and each child package together.
 
 ## Everyday entry points
 
-- **`/memory`** — browse indexed summaries and manage sources, vector status and maintenance. No legacy subcommands. Model retrieval defaults to the current workspace; explicit `scope: "all"` is needed for cross-project or unknown/legacy history.
+- **`/memory`** — browse indexed summaries and manage sources, vector status and maintenance. Model retrieval defaults to the current workspace; explicit `scope: "all"` is needed for cross-project or unknown/legacy history.
 - **`/advisor`** — choose a reviewer model. Consultations are separately billed and must run alone, using a fresh transformed-context snapshot.
 - **`/remote-connect`**, **`/remote-status`**, **`/remote-exit`** — enter, inspect and leave an SSH workspace.
 - Context compression, delegation and companion commands remain owned by their respective upstream plugins; see the [inventory](docs/plugins.md).
 
-Memory does not change BCP's compression algorithm. With locally authorized automatic embeddings, it indexes after compression and reports a compact one-line batch result. It sends sanitized summary prefixes and queries, **not raw sessions**, to the embedding service; sanitization cannot guarantee removal of all sensitive information. It keeps keyword fallback when embeddings fail. Read the [Memory contract and limits](packages/memory/README.md) before enabling network access.
+Memory embeddings are opt-in and send sanitized summary prefixes and queries to an external service. Sanitization is best-effort; read the [Memory configuration and limits](packages/memory/README.md) before enabling them.
 
 ## Repository structure
 
@@ -89,7 +71,7 @@ docs/                    Architecture, setup, maintenance and design records
 skills/ prompts/ themes/ Reserved personal resources (currently placeholders)
 ```
 
-Plugin source, tests and provenance belong with the plugin. Root configuration and tests own the **composition**. Current UI themes live in `packages/ui/themes`, not the reserved root `themes` directory. No extra directory layers or package renames are required to express this separation.
+Each plugin contains its source, tests and provenance. Current UI themes live in `packages/ui/themes`.
 
 ## Boundaries and maintenance
 
@@ -100,7 +82,5 @@ Plugin source, tests and provenance belong with the plugin. Root configuration a
 - `bun run check` includes Memory's Node-based SQLite tests. SSH smoke uses a process shim, not a real SSH server; terminal visuals, real providers and ARM64 execution need separate validation.
 
 See [maintenance](docs/maintenance.md) for adding extensions and upgrading the stack, and the [documentation map](docs/README.md) for current contracts versus historical proposals.
-
-The Git history originated in `pi-ssh-remote`; the project now has a broader purpose. The child package retains its protocol identity for compatibility. Migration details live in [configuration](docs/configuration.md), not in the main product narrative.
 
 [MIT](LICENSE). Imported components retain their own licenses and ownership.

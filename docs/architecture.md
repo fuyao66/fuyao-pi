@@ -2,15 +2,7 @@
 
 [Documentation index](README.md) · [Configuration](configuration.md) · [Maintenance](maintenance.md)
 
-## Product boundary
-
-fuyao-pi is a personal **Pi Agent environment and extension integration repository**.
-Its unit of maintenance is the complete configured environment, not a single SSH tool.
-It provides source, manifests, setup and regression checks. It does not implement a
-replacement Pi core, ship a separate CLI, manage model accounts, or guarantee a
-one-click installation on every operating system.
-
-## Four parts of the system
+## Components
 
 | Part | Owner / source of truth | Change location |
 | --- | --- | --- |
@@ -29,10 +21,8 @@ unrelated package declarations. Actual root entry order is defined by `package.j
 
 ### Context: BCP
 
-BCP is an upstream pinned dependency, not code owned by this repository. It changes
-model-visible conversation context through compression while preserving backing
-history for recovery. T1/T2/T3 describe compression nesting, not separate long-term
-memory stores. fuyao-pi does not replace this mechanism.
+BCP compresses model-visible conversation context while preserving backing history
+for recovery. T1/T2/T3 describe compression nesting.
 
 ### Review: Advisor
 
@@ -61,8 +51,7 @@ apply to tools and uploads. Management browsing can inspect retained excluded ro
 Successful compression triggers background current-session scans; startup and settled
 scans are fallbacks. Indexing precedes embeddings, so lexical retrieval does not wait
 for the provider. Summary/vector commits produce one-line user feedback, excluded
-from model context. Remote embedding is separately opted in; no extra chat-model
-summary generation, curated-fact layer or automatic age deletion is implemented.
+from model context. Remote embedding is separately opted in.
 See [Memory current contract](../packages/memory/README.md) for limits and privacy.
 
 ### Workspace: remote-ssh
@@ -76,10 +65,9 @@ See [SSH boundaries](../packages/remote-ssh/README.md).
 
 ### Presentation: UI
 
-The Sakura-derived UI and theme are locally maintained source, not an external package
-to auto-overwrite. Five root extension entries provide header, matrix, Zentui, quota and
-shimmer functionality. Components use Pi's TUI; no second renderer or separate app is
-introduced. Visual changes require terminal testing beyond static checks.
+Five extension entries provide the Sakura-derived header, matrix, Zentui, quota and
+shimmer functionality, alongside the theme. Components use Pi's TUI. Visual changes
+require terminal testing beyond static checks.
 
 ## Execution and data boundaries
 
@@ -94,14 +82,3 @@ introduced. Visual changes require terminal testing beyond static checks.
 “Local” means local to the host running Pi, not necessarily offline. Source permissions
 and workspace filters avoid accidental retrieval/upload; they are not an OS sandbox.
 All installed extensions execute with Pi's process permissions.
-
-## Why the directory layout stays simple
-
-`packages/` contains real capability boundaries; `config/` describes the environment;
-`scripts/` assembles it; `test/` verifies integration; `docs/` explains ownership and use.
-Reserved resources in `skills/`, `prompts/`, `themes/` are placeholders, not a framework
-requiring extra layers. Keep build outputs and workers generated/ignored, private state
-outside Git, and each derivative's upstream notices next to its code.
-
-The old `pi-ssh-remote` package name and protocol identifiers remain within its child
-package for compatibility. They do not define the scope or public identity of fuyao-pi.

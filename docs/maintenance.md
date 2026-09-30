@@ -15,20 +15,17 @@
 | Cross-package behavior | Root `test/` or owning package integration tests |
 | Private keys, providers, sessions and memory data | Local runtime configuration, never Git |
 
-Do not vendor third-party code just to collect it. Keep a source derivative only when
-personal changes or compatibility work justify maintenance ownership. Current examples
-are UI customization, Advisor's BCP context adaptation and Memory's summary indexing.
-Retain upstream licenses, import version/commit and local differences in `UPSTREAM.md`.
-Update provenance when merging upstream changes; do not imply upstream endorses the fork.
+Prefer upstream packages unless local changes require maintaining a derivative.
+Retain licenses, import version/commit and local differences in `UPSTREAM.md`, and
+update provenance when merging upstream changes.
 
 Maintained runtime interface text is **English**. Do not translate user content or stored
 memory summaries. English and Chinese root documentation should describe the same feature
-set; Chinese documentation is not a runtime UI inconsistency.
+set.
 
 ## Development loop
 
-1. Inspect `git status` before editing. Preserve unrelated work, especially concurrent UI
-   changes; explicitly stage only the intended files.
+1. Keep each change focused and preserve unrelated work.
 2. Read the package contract and Pi APIs relevant to the change. Add regression tests for
    lifecycle, cancellation and non-interactive behavior, not just the happy path.
 3. Run from the repository root:
@@ -55,9 +52,7 @@ set; Chinese documentation is not a runtime UI inconsistency.
 6. Update the owning package contract and relevant integration docs. Restart Pi when
    changing loaded extension code; do not assume the running process hot-reloads it.
 
-Document-only changes need link/path/command review, not paid model requests or another
-full SSH test. If other work prevents a clean validation, test HEAD plus the intended
-patch in an isolated directory rather than reverting someone else's work.
+For documentation-only changes, check links, paths and example commands.
 
 ## Upgrading the environment
 
@@ -89,6 +84,4 @@ rollback and agent-directory limitations.
 - [ ] Licenses and source provenance remain intact.
 - [ ] User-facing changes mention restart/migration requirements.
 
-The packages are currently private workspace packages. Do not treat their versions or
-retained upstream publishing metadata as an npm release pipeline. The repository is the
-unit of delivery; an independent executable or automatic release framework is not provided.
+Packages are private workspaces and are not published to npm.
