@@ -7,7 +7,7 @@
 - Local private derivative: `@fuyao/pi-memory@0.5.3-fuyao.1`, not published to npm.
 
 The upstream source modules and self-tests are retained. This derivative adds
-`src/embeddings.ts`, `src/hybrid.ts`, explicit embedding commands and integration
+`src/embeddings.ts`, `src/hybrid.ts`, `src/auto-embed.ts`, manual/opt-in automatic embedding and integration
 at `memory_search`. Upstream ingestion, allow-list, lexical lookup, expansion,
 watermarks and durable pruning remain. Source loading replaces upstream's bundled
 Git-distribution workflow. See [README.md](README.md) for the fork contract.
@@ -18,6 +18,11 @@ Upstream is an offline lexical search plugin. This fork is lexical/offline by
 default, but **opt-in hybrid search makes remote embedding requests**. It does not
 claim to satisfy upstream's no-network search policy. No embedding SDK or vector
 database is needed; vectors are stored in the existing SQLite database.
+`autoBackfill:true` (public default false) separately authorizes background summary
+uploads after startup/ingestion. A coalescing, session-scoped scheduler batches work,
+backs off failures and stops on shutdown. BCP delegates skip auto tasks; a short
+SQLite lease reduces cross-process duplicate backfills without holding HTTP transactions.
+Manual backfill remains interactive. See README for timing and capacity limits.
 
 Only redacted, path-stripped stored topic/summary prefixes and queries are sent.
 This is best-effort sanitization, **not a guarantee that summaries contain no

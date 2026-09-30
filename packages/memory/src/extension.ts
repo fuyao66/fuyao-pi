@@ -23,7 +23,8 @@
  * substrings, mixed Chinese/English text and code identifiers out of the box; tokens of <= 2
  * characters use AND-ed LIKE clauses against summary and topic, and a mixed query combines FTS for
  * long tokens with LIKE for short ones. Lexical mode remains local. Opt-in hybrid mode sends
- * redacted, path-stripped queries to an embedding service; summary uploads require explicit backfill.
+ * redacted, path-stripped queries to an embedding service; summary uploads use explicit backfill
+ * or opt-in automatic background backfill after summary scans.
  *
  * Event strategy: never hooks context events (that is ACP's domain);
  * session_start → background allow-list scan (async fs I/O, does not block session start;
@@ -52,6 +53,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory } from "./hybrid.js";
+import { AutoEmbed } from "./auto-embed.js";
 
 // ---------------------------------------------------------------------------
 // Constants / config / logging
@@ -1762,7 +1764,10 @@ export default async function factory(pi: ExtensionAPI) {
   const paramsSchema = MEMORY_SEARCH_PARAMETERS;
   const embeddingConfig = loadEmbeddingConfig();
   let hybrid: HybridMemory | null = null;
-  const stopEmbedding = () => { hybrid?.abort(); hybrid = null; };
+  let auto: AutoEmbed | null = null;
+  const automatic = embeddingConfig.enabled && embeddingConfig.autoBackfill &&
+    !(Number(process.env.PI_ACP_DELEGATE_DEPTH ?? "0") > 0);
+  const stopEmbedding = () => { auto?.stop(); auto = null; hybrid?.abort(); hybrid = null; };
   const getHybrid = () => {
     if (!hybrid) {
       const store = getDb();
@@ -1772,6 +1777,30 @@ export default async function factory(pi: ExtensionAPI) {
         undefined, () => generation === sessionGeneration && !dbClosed);
     }
     return hybrid;
+  };
+
+  const uploadPermissions = async () => {
+    const files = new Set<string>();
+    for (const source of await loadSources()) {
+      const kind = { "pi-sidecar": "pi", "opencode-acp": "opencode", "bili-session": "bili" }[source.adapter];
+      if (!source.enabled || !kind) continue;
+      const listed = await listSourceFiles(source);
+      for (const file of listed.files) {
+        const relative = path.relative(source.root, file);
+        if (source.adapter === "pi-sidecar" && relative.split(path.sep).some((part) => cfg.excludeDirs.includes(part))) continue;
+        files.add(JSON.stringify([file, kind]));
+      }
+    }
+    return (row: any) => files.has(JSON.stringify([row.sourceFile, row.kind]));
+  };
+  const triggerAuto = (generation: number) => {
+    if (!automatic || generation !== sessionGeneration || dbClosed) return;
+    if (!auto) {
+      const worker = getHybrid(); // Capture this session's instance, never re-create from an old timer.
+      auto = new AutoEmbed(() => worker.backfill(20, uploadPermissions), () => generation === sessionGeneration && !dbClosed,
+        (message) => logLine(message));
+    }
+    auto.trigger();
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -1789,7 +1818,7 @@ export default async function factory(pi: ExtensionAPI) {
     if (!cfg.scanOnStartup) {
       // Startup full scan disabled: force-scan only the current session so it is visible immediately;
       // agent_settled and the pre-search scan keep everything else fresh.
-      scanCurrentSession(sessionFile, true, ctx.cwd).catch((e) =>
+      scanCurrentSession(sessionFile, true, ctx.cwd).then(() => triggerAuto(generation)).catch((e) =>
         logLine(`session_start scan error: ${withoutPaths(e.message)}`),
       );
       return;
@@ -1808,6 +1837,7 @@ export default async function factory(pi: ExtensionAPI) {
         if (generation !== sessionGeneration) return;
         const st = getDb().stats();
         logLine(`db ready: ${path.basename(st.dbPath)} sources=${st.sources} blocks=${st.blocks}`);
+        triggerAuto(generation);
       })
       .catch((e) => logLine(`session_start scan error: ${withoutPaths(e.stack || e.message)}`));
     backgroundScan = run;
@@ -1817,9 +1847,11 @@ export default async function factory(pi: ExtensionAPI) {
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
+    const generation = sessionGeneration;
     try {
       const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
       await scanCurrentSession(sessionFile, false, ctx.cwd);
+      triggerAuto(generation);
     } catch (e) {
       log(`agent_settled: ${e.message}`);
     }
@@ -1878,7 +1910,7 @@ export default async function factory(pi: ExtensionAPI) {
     promptGuidelines: [
       "Use memory_search when the user asks about past work, conclusions, decisions, or context from earlier sessions or from earlier in this session after compression.",
       "For Chinese queries shorter than 3 characters, the lexical route uses substring matching automatically — still pass the query as-is.",
-      "Results report hybrid or keyword fallback and vector coverage. Semantic-only hits require explicitly backfilled summaries; do not assume every historical block has a vector.",
+      "Results report hybrid or keyword fallback and vector coverage. Semantic-only hits require indexed summaries (background auto-backfill when enabled); do not assume every historical block already has a vector.",
     ],
     parameters: paramsSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -1888,6 +1920,7 @@ export default async function factory(pi: ExtensionAPI) {
         await scanSources();
         const { query, project, limit } = readMemorySearchParams(params);
         if (generation !== sessionGeneration || dbClosed) throw new Error("Memory search session expired");
+        triggerAuto(generation);
         const res = embeddingConfig.enabled
           ? await getHybrid().search(query, { project, limit }, _signal)
           : getDb().search(query, { project, limit });
@@ -2053,7 +2086,7 @@ export default async function factory(pi: ExtensionAPI) {
         if (want.startsWith("embed")) {
           if (want === "embed status") {
             const status = getHybrid().status();
-            ctx.ui?.notify?.(`Embedding ${embeddingConfig.enabled ? "enabled" : "disabled"}: ${embeddingConfig.model}; indexed ${status.indexed}/${status.total}, pending ${status.pending}, truncated ${status.truncated}${status.capped ? "; scan capped" : ""}`, "info");
+            ctx.ui?.notify?.(`Embedding ${embeddingConfig.enabled ? "enabled" : "disabled"}: ${embeddingConfig.model}; indexed ${status.indexed}/${status.total}, pending ${status.pending}, truncated ${status.truncated}${status.capped ? "; scan capped" : ""}; auto ${automatic ? auto?.status().state ?? "idle" : "off"}${auto?.status().state === "backoff" ? ` (retry in ${Math.ceil(auto.status().retryInMs / 1000)}s)` : ""}`,  "info");
             return;
           }
           const match = /^embed backfill(?:\s+(\d+))?$/.exec(want);
@@ -2075,7 +2108,9 @@ export default async function factory(pi: ExtensionAPI) {
           return;
         }
         if (want === "rescan") {
+          const generation = sessionGeneration;
           const r = await scanSources(true);
+          triggerAuto(generation);
           const msg = `Force rescan done: sources=${r.sources} files=${r.files} parsed=${r.scanned} newBlocks=${r.inserted} redacted=${r.redacted} failed=${r.failed}`;
           ctx.ui?.notify?.(msg, "info");
           return;

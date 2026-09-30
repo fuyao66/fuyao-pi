@@ -82,9 +82,9 @@ Smoke 不等同于真实 SSH 服务器或模型 API 测试；ARM64 需另行运�
 
 ## BCP 增强记忆
 
-[`packages/memory/`](packages/memory/README.md) 基于 pi-billion-memory，保留原数据库、允许列表与 FTS5/LIKE 检索，增加显式启用的远端 Embedding、SQLite 向量和 RRF 融合。不改 BCP 压缩算法、不自动上传整库历史；启用且存在向量时会向服务商发送脱敏查询。
+[`packages/memory/`](packages/memory/README.md) 基于 pi-billion-memory，保留原数据库、允许列表与 FTS5/LIKE 检索，增加显式启用的远端 Embedding、SQLite 向量和 RRF 融合。不改 BCP 压缩算法、不上传原始对话；启用且存在向量时会向服务商发送脱敏查询。
 
-`/memory embed status` 查看覆盖率；`/memory embed backfill [1-100]` 经 UI 确认后分批补建摘要向量。服务失败自动回退关键词。公开默认关闭，服务地址/密钥留在本地 `~/.pi/fuyao-memory-embedding.json` 与密钥文件。脱敏不是完全去敏保证，详情见插件文档。
+本地 `autoBackfill:true` 后启动自动分批补齐摘要向量，后续新摘要也后台增量补建，失败退避不阻塞聊天。`/memory embed status` 查看覆盖率与自动任务状态；手动 `embed backfill [1-100]` 仍保留。服务失败自动回退关键词。公开默认关闭，服务地址/密钥留在本地 `~/.pi/fuyao-memory-embedding.json` 与密钥文件。脱敏不是完全去敏保证，详情见插件文档。
 
 记忆测试必须使用 Node `node:sqlite`：`bun run test:memory`；已纳入根 `bun run check`，不要对该目录直接使用 `bun test`。
 

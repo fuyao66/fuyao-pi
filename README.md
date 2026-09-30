@@ -84,7 +84,7 @@ Restart Pi and select a reviewer with `/advisor`. No model or credentials are co
 
 [`packages/memory/`](packages/memory/README.md) derives from pi-billion-memory, preserving the existing database, allow-list and FTS5/LIKE search. Opt-in remote embeddings add SQLite vectors, cosine retrieval and RRF fusion; failures fall back to lexical search. It changes no BCP compression algorithm and never automatically uploads the entire history.
 
-`/memory embed status` reports coverage. `/memory embed backfill [1-100]` uploads summary prefixes only after UI confirmation. Enabled searches with indexed vectors send redacted queries to the configured service. Public defaults are disabled; endpoint and credential files remain local. Redaction is best-effort, not a guarantee of non-sensitive input. See the package docs for limits and configuration.
+Local `autoBackfill:true` enables nonblocking startup and incremental summary embedding with bounded batches and failure backoff. `/memory embed status` reports coverage and scheduler state. Manual `/memory embed backfill [1-100]` remains available with UI confirmation. Enabled searches with indexed vectors send redacted queries to the configured service. Public defaults are disabled; endpoint and credential files remain local. Redaction is best-effort, not a guarantee of non-sensitive input. See the package docs for limits and configuration.
 
 Memory tests require Node `node:sqlite`: `bun run test:memory`, also included in root `bun run check`. Do not run these files with Bun's test runtime.
 

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { HybridMemory, fuse } from "../src/hybrid.ts";
 import { EmbeddingClient, sanitizeEmbeddingConfig, namespace, prepareText, encodeVector, decodeVector } from "../src/embeddings.ts";
 import { formatResults, redactSecrets, withoutPaths } from "../src/extension.ts";
@@ -120,6 +123,54 @@ test("later backfill batches never upload deleted or changed snapshot text", asy
       assert.ok(!JSON.stringify(sent).includes("snapshot-8"));
     } finally { f.close(); }
   }
+});
+
+test("shared database lease excludes a second worker and manual/automatic overlap", async () => {
+  const f = fixture();
+  try {
+    let release!: (vectors: number[][]) => void;
+    const first = new HybridMemory(f.store, config, redact, { embed: () => new Promise(r => { release = r; }) } as any);
+    const second = new HybridMemory(f.store, config, redact, { embed: async (x: string[]) => x.map(() => [1, 0]) } as any);
+    const work = first.backfill(1);
+    await assert.rejects(first.backfill(1), /already running/);
+    await assert.rejects(second.backfill(1), /another Pi process/);
+    release([[1, 0]]); await work;
+    assert.equal((await second.backfill(1)).stored, 1);
+    f.store.db.prepare("INSERT INTO memory_embedding_lease VALUES(1,'dead-worker',?)").run(Date.now() - 1);
+    assert.equal((await second.backfill(1)).stored, 1);
+  } finally { f.close(); }
+});
+
+test("lease excludes a second connection, renews and recovers an expired owner", async () => {
+  const dir=mkdtempSync(join(tmpdir(),'memory-lease-'));
+  const a=new DatabaseSync(join(dir,'shared.db')); const b=new DatabaseSync(join(dir,'shared.db'));
+  try {
+    a.exec("CREATE TABLE sources(source_file TEXT PRIMARY KEY,project TEXT,cwd TEXT); CREATE TABLE blocks(id INTEGER PRIMARY KEY,source_file TEXT,kind TEXT,block_id TEXT,tier INTEGER,topic TEXT,ref_start TEXT,ref_end TEXT,compressed_tokens INTEGER,created_at INTEGER,summary TEXT); INSERT INTO sources VALUES('a','test','test'); INSERT INTO blocks(id,source_file,block_id,summary) VALUES(1,'a','b1','synthetic');");
+    const store=(db: DatabaseSync)=>({db,closed:false,search:()=>({mode:'fts',rows:[]})});
+    let release!: (vectors:number[][])=>void;
+    const first=new HybridMemory(store(a),config,redact,{embed:()=>new Promise(r=>{release=r;})} as any);
+    const second=new HybridMemory(store(b),config,redact,{embed:async()=>[[1,0]]} as any);
+    const work=first.backfill(1);
+    await assert.rejects(second.backfill(1),/another Pi process/);
+    a.prepare('UPDATE memory_embedding_lease SET expires_at=?').run(Date.now()+10);
+    release([[1,0]]); await work; assert.equal(second.status().indexed,1);
+    a.exec("DELETE FROM memory_vectors; INSERT INTO memory_embedding_lease VALUES(1,'crashed',0);");
+    assert.equal((await second.backfill(1)).stored,1);
+  } finally {a.close();b.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test("empty prepared prefixes don't poison valid rows; revoked sources don't upload in later batches", async () => {
+  const f = fixture();
+  try {
+    f.store.db.prepare("UPDATE blocks SET summary=? WHERE id=1").run(' '.repeat(7000)+'valid tail');
+    assert.equal((await f.hybrid.backfill(3)).stored, 2);
+    assert.equal((await f.hybrid.backfill(3)).uploaded, 0);
+    f.store.db.exec('DELETE FROM memory_vectors');
+    let checks=0;
+    const result=await f.hybrid.backfill(20,async()=>++checks===1 ? () => true : row => row.project==='ProjB');
+    assert.equal(result.uploaded,1); assert.equal(result.stored,1);
+    assert.ok(f.sent.at(-1)!.every(x=>x.includes('Remote')));
+  } finally { f.close(); }
 });
 
 test("shutdown invalidates outstanding backfill without reopening store", async () => {

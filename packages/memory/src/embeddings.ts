@@ -4,12 +4,12 @@ import { resolve, join } from "node:path";
 import { createHash } from "node:crypto";
 
 export interface EmbeddingConfig {
-  enabled: boolean; baseUrl: string; model: string; dimensions: number;
+  enabled: boolean; autoBackfill: boolean; baseUrl: string; model: string; dimensions: number;
   apiKeyEnv: string; apiKeyFile: string; revision: string;
   timeoutMs: number; maxInputBytes: number; maxBlocks: number; minSimilarity: number;
 }
 export const defaults: EmbeddingConfig = {
-  enabled: false, baseUrl: "", model: "text-embedding-3-large", dimensions: 3072,
+  enabled: false, autoBackfill: false, baseUrl: "", model: "text-embedding-3-large", dimensions: 3072,
   apiKeyEnv: "FUYAO_MEMORY_EMBEDDING_KEY", apiKeyFile: "", revision: "1",
   timeoutMs: 10000, maxInputBytes: 6000, maxBlocks: 10000, minSimilarity: 0.15,
 };
@@ -18,6 +18,7 @@ export function sanitizeEmbeddingConfig(raw: any): EmbeddingConfig {
   const out = { ...defaults };
   if (!raw || typeof raw !== "object") return out;
   out.enabled = raw.enabled === true;
+  out.autoBackfill = raw.autoBackfill === true;
   for (const key of ["baseUrl", "model", "apiKeyEnv", "apiKeyFile", "revision"] as const) {
     if (typeof raw[key] === "string") out[key] = raw[key].trim();
   }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EmbeddingClient, type EmbeddingConfig, namespace, prepareText, encodeVector, cosineBlob } from "./embeddings.js";
 
 interface Store { db: any; closed: boolean; search(query: string, opts?: any): { mode: string; rows: any[] } }
@@ -7,6 +8,9 @@ export function ensureVectorSchema(store: Store): void {
     block_id INTEGER NOT NULL, namespace TEXT NOT NULL, input_hash TEXT NOT NULL,
     dimensions INTEGER NOT NULL, vector BLOB NOT NULL, truncated INTEGER NOT NULL,
     PRIMARY KEY(block_id, namespace), CHECK(length(vector) = dimensions * 4)
+  );
+  CREATE TABLE IF NOT EXISTS memory_embedding_lease (
+    id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, expires_at INTEGER NOT NULL
   );
   CREATE TRIGGER IF NOT EXISTS memory_vectors_delete AFTER DELETE ON blocks BEGIN
     DELETE FROM memory_vectors WHERE block_id = old.id;
@@ -26,6 +30,7 @@ export function fuse(lexical: any[], semantic: any[], limit: number): any[] {
 
 export class HybridMemory {
   readonly ns: string;
+  private readonly owner = randomUUID();
   private busy = false;
   private searching = false;
   private controller = new AbortController();
@@ -34,7 +39,22 @@ export class HybridMemory {
     this.ns = namespace(config);
     ensureVectorSchema(store);
   }
-  abort(): void { this.controller.abort(); }
+  abort(): void { this.controller.abort(); this.releaseLease(); }
+  private releaseLease(): void {
+    if (!this.store.closed && this.store.db) {
+      try { this.store.db.prepare("DELETE FROM memory_embedding_lease WHERE id=1 AND owner=?").run(this.owner); } catch { /* Closed store. */ }
+    }
+  }
+  private acquireLease(): void {
+    if (!this.valid()) throw new Error("Memory embedding operation expired");
+    const now = Date.now();
+    this.store.db.prepare(`INSERT INTO memory_embedding_lease VALUES(1,?,?)
+      ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at
+      WHERE memory_embedding_lease.expires_at<=? OR memory_embedding_lease.owner=?`)
+      .run(this.owner, now + 120000, now, this.owner);
+    if (this.store.db.prepare("SELECT owner FROM memory_embedding_lease WHERE id=1").get()?.owner !== this.owner)
+      throw new Error("Embedding backfill busy in another Pi process");
+  }
   private valid(): boolean { return !this.controller.signal.aborted && this.current() && !this.store.closed && !!this.store.db; }
   private input(row: any) { return prepareText(`${row.topic ?? ""}\n${row.summary}`, this.config, this.redact); }
   private *rows(project?: string): Generator<any> {
@@ -55,15 +75,19 @@ export class HybridMemory {
     }
     return { total, scanned, indexed, pending: scanned - indexed, truncated, capped: total > scanned };
   }
-  async backfill(limit = 20): Promise<{ uploaded: number; stored: number; skipped: number; status: ReturnType<HybridMemory["status"]> }> {
+  async backfill(limit = 20, permissions?: () => Promise<(row: any) => boolean>): Promise<{ uploaded: number; stored: number; skipped: number; status: ReturnType<HybridMemory["status"]> }> {
     if (!this.config.enabled) throw new Error("Embedding disabled");
     if (this.busy) throw new Error("Embedding backfill already running");
     this.busy = true;
     let uploaded = 0, stored = 0, skipped = 0;
     try {
+      this.acquireLease();
+      let eligible = permissions ? await permissions() : () => true;
+      this.acquireLease();
       const pending: any[] = [];
       const cap = Math.max(1, Math.min(100, Math.floor(limit)));
       for (const row of this.rows()) {
+        if (!eligible(row) || !this.input(row).text.trim()) { skipped++; continue; }
         let valid = false;
         if (row.vector && row.inputHash === this.input(row).hash && row.dimensions === this.config.dimensions) {
           try { cosineBlob(row.vector, this.config.dimensions); valid = true; } catch { /* Rebuild. */ }
@@ -72,19 +96,20 @@ export class HybridMemory {
         if (pending.length >= cap) break;
       }
       for (let i = 0; i < pending.length; i += 8) {
-        if (!this.valid()) throw new Error("Memory embedding operation expired");
+        if (permissions) eligible = await permissions();
+        this.acquireLease();
         const batch = pending.slice(i, i + 8).flatMap(row => {
           // A previous request yielded to prune/ingestion. Revalidate BEFORE upload,
           // not merely before persistence, so later batches never send stale text.
           const present = this.store.db.prepare("SELECT id,topic,summary FROM blocks WHERE id=? AND source_file=? AND block_id=?").get(row.id, row.sourceFile, row.blockId);
-          if (!present || this.input(present).hash !== this.input(row).hash) { skipped++; return []; }
+          if (!eligible(row) || !present || this.input(present).hash !== this.input(row).hash) { skipped++; return []; }
           return [row];
         });
         if (!batch.length) continue;
         const inputs = batch.map(row => this.input(row));
         const vectors = await this.client.embed(inputs.map(x => x.text), this.controller.signal);
         uploaded += batch.length;
-        if (!this.valid()) throw new Error("Memory embedding operation expired");
+        this.acquireLease();
         // No async work inside this transaction. Recheck existence/content after HTTP.
         this.store.db.exec("BEGIN IMMEDIATE");
         try {
@@ -98,7 +123,7 @@ export class HybridMemory {
         } catch (error) { this.store.db.exec("ROLLBACK"); throw error; }
       }
       return { uploaded, stored, skipped, status: this.status() };
-    } finally { this.busy = false; }
+    } finally { this.releaseLease(); this.busy = false; }
   }
   async search(query: string, opts: { project?: string; limit?: number } = {}, signal?: AbortSignal) {
     const cancelled = () => ({ mode: "cancelled", rows: [], reason: "Memory search cancelled" });
