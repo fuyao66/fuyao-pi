@@ -26,7 +26,7 @@ export class MemoryBrowser {
   constructor(private rows: BrowserRow[], private load: (id: string) => BrowserDetail | undefined,
     private theme: Pick<Theme, "fg" | "bold">, private height: () => number,
     private redraw: () => void, private done: () => void,
-    private current: () => boolean, private title = "已存记忆") {
+    private current: () => boolean, private title = "Saved memories") {
     this.scroll = new ScrollView(this.text, { scrollbar: "hidden" });
     this.rebuild(5);
   }
@@ -44,10 +44,10 @@ export class MemoryBrowser {
         this.detail = this.load(item.value);
         this.deleted = !this.detail;
         if (this.detail) this.rows[this.selected] = { ...this.detail };
-        this.text.setText(cleanBody(this.detail?.summary ?? "这条记忆已删除或不再可用。"));
+        this.text.setText(cleanBody(this.detail?.summary ?? "This memory was deleted or is no longer available."));
       } catch {
         this.detail = undefined; this.deleted = true;
-        this.text.setText("读取失败。按 Esc 返回后重试。");
+        this.text.setText("Unable to load this memory. Press Esc and try again.");
       }
       this.scroll.scrollToStart();
     };
@@ -56,7 +56,7 @@ export class MemoryBrowser {
   render(width: number): string[] {
     width = Math.max(1, Math.floor(width));
     const height = Math.max(1, Math.floor(this.height()));
-    if (width < 8 || height < 3) return [truncateToWidth("窗口太小 · Esc", width)];
+    if (width < 8 || height < 3) return [truncateToWidth("Too small · Esc", width)];
     const innerWidth = width - 4;
     const border = (text: string) => this.theme.fg("border", text);
     const lines = this.renderContent(innerWidth, height - 2);
@@ -68,15 +68,15 @@ export class MemoryBrowser {
   private renderContent(width: number, h: number): string[] {
     const clip = (line: string) => truncateToWidth(line, Math.max(1, width));
     const header = this.theme.fg("accent", this.theme.bold(`Memory / ${this.title}`));
-    if (h < 7) return ["终端太矮，请增高窗口", "Esc 返回 / 关闭"].slice(0, h).map(clip);
+    if (h < 7) return ["Increase terminal height", "Esc Back / Close"].slice(0, h).map(clip);
     if (!this.detail && !this.deleted) {
       const available = Math.max(1, h - 7);
       if (available !== this.listHeight) this.rebuild(available);
       const row = this.rows[this.selected];
-      const lines = [header, this.theme.fg("dim", `最近 ${this.rows.length} 条 · 仅显示标题，Enter 查看正文`), "",
-        ...(this.rows.length ? this.list.render(Math.max(1, width)) : ["暂无记录"]), "",
+      const lines = [header, this.theme.fg("dim", `Latest ${this.rows.length} · Enter to read`), "",
+        ...(this.rows.length ? this.list.render(Math.max(1, width)) : ["No entries yet"]), "",
         row ? this.theme.fg("muted", `${preview(row.project, 30)} · ${preview(row.blockId, 40)} · ${preview(row.date, 25)} · ${preview(row.vector, 50)}`) : "",
-        this.theme.fg("dim", width < 40 ? "↑↓选 Enter看 Esc关" : "↑↓ 选择  Enter 详情  Esc 关闭")];
+        this.theme.fg("dim", width < 40 ? "↑↓ Enter:Read Esc:Close" : "↑↓ Select  Enter Details  Esc Close")];
       return lines.slice(0, h).map(clip);
     }
     const d = this.detail;
@@ -84,11 +84,11 @@ export class MemoryBrowser {
     const body = this.scroll.render(Math.max(1, width));
     this.scroll.updateLayout(body.length, bodyHeight, this.redraw);
     const top = this.scroll.scrollTop;
-    return [header, this.theme.fg("accent", preview(d?.title || d?.blockId || "记录已删除", 200)),
+    return [header, this.theme.fg("accent", preview(d?.title || d?.blockId || "Deleted memory", 200)),
       this.theme.fg("muted", d ? `${preview(d.project)} · ${preview(d.blockId, 40)} · ${preview(d.date, 25)} · ${preview(d.vector, 40)}` : ""), "",
       ...body.slice(top, top + bodyHeight),
-      this.theme.fg("dim", `正文 ${Math.min(top + 1, body.length)}–${Math.min(top + bodyHeight, body.length)}/${body.length} 行`),
-      this.theme.fg("dim", width < 40 ? "↑↓滚 PgUp/Dn页 Esc返" : "↑↓ 滚动  PgUp/PgDn 翻页  Esc 返回")].slice(0, h).map(clip);
+      this.theme.fg("dim", `Lines ${Math.min(top + 1, body.length)}–${Math.min(top + bodyHeight, body.length)}/${body.length}`),
+      this.theme.fg("dim", width < 40 ? "↑↓ PgUp/Dn Esc:Back" : "↑↓ Scroll  PgUp/PgDn Page  Esc Back")].slice(0, h).map(clip);
   }
   handleInput(data: string): void {
     if (!this.current()) { this.done(); return; }
@@ -106,7 +106,7 @@ export class MemoryBrowser {
 }
 export async function showMemoryBrowser(ctx: ExtensionContext, rows: BrowserRow[], load: (id: string) => BrowserDetail | undefined,
   current: () => boolean, ownClose: (close?: () => void) => void, title?: string): Promise<void> {
-  if (ctx.mode !== "tui" || !ctx.hasUI) { ctx.ui?.notify?.(`Memory：${rows.length} 条近期记录；请在终端中打开 /memory 浏览详情。`, "info"); return; }
+  if (ctx.mode !== "tui" || !ctx.hasUI) { ctx.ui?.notify?.(`Memory: ${rows.length} recent entries. Open /memory in TUI mode to browse details.`, "info"); return; }
   try {
     await ctx.ui.custom<void>((tui, theme, _kb, done) => {
       ownClose(() => done());

@@ -2139,7 +2139,7 @@ export default async function factory(pi: ExtensionAPI) {
 
   pi.registerCommand("memory", {
     description:
-      "打开 Memory 记忆管理：摘要、自动活动、向量状态及维护操作",
+      "Manage Memory: browse summaries, background activity, vector status and maintenance",
     handler: async (args, ctx) => {
       try {
         const generation = sessionGeneration;
@@ -2148,14 +2148,14 @@ export default async function factory(pi: ExtensionAPI) {
         if (!want) {
           const st = getDb().stats();
           const vs = embeddingConfig.enabled ? getHybrid().status() : null;
-          const status = `${st.blocks} 条摘要 · 向量 ${vs ? `${vs.indexed}/${vs.total}` : "关闭"} · 自动 ${automatic ? auto?.status().state ?? "idle" : "off"}`;
+          const status = `${st.blocks} summaries · Vectors ${vs ? `${vs.indexed}/${vs.total}` : "off"} · Auto ${automatic ? auto?.status().state ?? "idle" : "off"}`;
           const action = await memoryMenu(ctx, status, current);
           if (!action) return;
           want = action;
           if (want === "prune") {
-            const days = await ctx.ui.input("保留最近多少天的记忆？", "例如 30；0 会删除所有带时间戳的摘要");
+            const days = await ctx.ui.input("How many days of memory should be retained?", "Example: 30. Use 0 to delete all timestamped summaries.");
             if (!current() || days === undefined) return;
-            if (!/^\d+$/.test(days.trim())) { ctx.ui.notify("请输入 0–36500 的整数天数", "warning"); return; }
+            if (!/^\d+$/.test(days.trim())) { ctx.ui.notify("Enter a whole number of days from 0 to 36500", "warning"); return; }
             want = `prune ${days.trim()}`;
           }
         }
@@ -2164,15 +2164,15 @@ export default async function factory(pi: ExtensionAPI) {
           if (want === "activity") {
             const events = feed.recent(80);
             const rows: BrowserRow[] = events.map((event, index) => ({ id: String(index), title: event.topic || event.blockId,
-              project: event.project || "未分类", blockId: event.blockId, date: new Date(event.at).toLocaleTimeString("zh-CN"),
-              vector: event.type === "vector" ? "向量已保存" : "摘要已入库" }));
-            await showMemoryBrowser(ctx, rows, id => { const i = Number(id); return rows[i] ? { ...rows[i], summary: `${events[i].summary || "暂无预览"}\n\n（本次运行活动预览；完整内容请在已存记忆中查看。）` } : undefined; }, current, ownClose, "本次活动");
+              project: event.project || "Uncategorized", blockId: event.blockId, date: new Date(event.at).toLocaleTimeString("en-GB"),
+              vector: event.type === "vector" ? "Vector saved" : "Summary indexed" }));
+            await showMemoryBrowser(ctx, rows, id => { const i = Number(id); return rows[i] ? { ...rows[i], summary: `${events[i].summary || "No preview available"}\n\n(Session activity preview. Browse saved memories for the full text.)` } : undefined; }, current, ownClose, "Session activity");
           } else {
             const query = `SELECT b.id,b.block_id AS blockId,b.topic,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file`;
             const describe = (r): BrowserRow => ({ id: String(r.id), title: preview(sanitizeDisplay(r.topic || r.blockId), 160),
-              project: preview(sanitizeDisplay(r.project ?? "未分类"), 60), blockId: preview(sanitizeDisplay(r.blockId), 60),
-              date: Number.isFinite(r.createdAt) ? new Date(r.createdAt).toLocaleDateString("zh-CN") : "日期未知",
-              vector: embeddingConfig.enabled ? ({ missing: "待嵌入", stale: "需更新", ready: "向量就绪", truncated: "向量就绪（前缀）" }[getHybrid().vectorState(r.id)]) : "Embedding 关闭" });
+              project: preview(sanitizeDisplay(r.project ?? "Uncategorized"), 60), blockId: preview(sanitizeDisplay(r.blockId), 60),
+              date: Number.isFinite(r.createdAt) ? new Date(r.createdAt).toLocaleDateString("en-GB") : "Unknown date",
+              vector: embeddingConfig.enabled ? ({ missing: "Pending embedding", stale: "Needs update", ready: "Vector ready", truncated: "Vector ready (prefix)" }[getHybrid().vectorState(r.id)]) : "Embedding off" });
             const rows = getDb().db.prepare(`${query} ORDER BY b.id DESC LIMIT 50`).all().map(describe);
             await showMemoryBrowser(ctx, rows, id => {
               if (!current()) return undefined;
@@ -2241,15 +2241,15 @@ export default async function factory(pi: ExtensionAPI) {
           const cutoff = Date.now() - keepDays * 86400000;
           const maxId = getDb().db.prepare("SELECT coalesce(max(id),0) AS n FROM blocks").get().n;
           const count = getDb().db.prepare("SELECT count(*) AS n FROM blocks WHERE created_at IS NOT NULL AND created_at < ? AND id <= ?").get(cutoff, maxId).n;
-          if (!ctx.hasUI) { ctx.ui?.notify?.("删除记忆需要交互确认；未执行。", "warning"); return; }
-          if (!await ctx.ui.confirm("确认删除旧记忆？", `预计删除 ${count} 条摘要及其向量，保留最近 ${keepDays} 天；删除会记录持久标记，重新扫描不会恢复。`)) return;
+          if (!ctx.hasUI) { ctx.ui?.notify?.("Pruning requires interactive confirmation; nothing was deleted.", "warning"); return; }
+          if (!await ctx.ui.confirm("Delete old memories?", `About ${count} summaries and their vectors will be deleted, keeping the last ${keepDays} days. Durable deletion markers prevent rescans from restoring them.`)) return;
           if (!current()) return;
           const p = getDb().prune(keepDays, cutoff, maxId);
           const msg = `Prune done: removed ${p.removedBlocks} block(s) / ${p.removedSources} empty source(s), ${p.remainingBlocks} remain (kept ${keepDays} day(s))`;
           ctx.ui?.notify?.(msg, "info");
           return;
         }
-        if (want && want !== "status") { ctx.ui?.notify?.("输入 /memory 打开统一记忆管理入口。", "info"); return; }
+        if (want && want !== "status") { ctx.ui?.notify?.("Use /memory to open the memory manager.", "info"); return; }
         const st = getDb().stats();
         const msg =
           `Memory store: ${st.sources} sources / ${st.sources_with_blocks} with compressed blocks / ` +

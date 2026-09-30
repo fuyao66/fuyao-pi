@@ -24,20 +24,20 @@ test("narrow widths, resize, empty/deleted records, and expired session", () => 
   h=18; browser.handleInput("\r"); for(const w of [1,8,20,40]) for(const l of browser.render(w)) assert.ok(visibleWidth(l)<=w);
   valid=false; browser.handleInput("\x1b[B"); assert.equal(closed,1);
   const empty=new MemoryBrowser([],()=>undefined,theme,()=>18,()=>{},()=>{},()=>true);
-  assert.match(empty.render(60).join("\n"),/暂无记录/);
+  assert.match(empty.render(60).join("\n"),/No entries yet/);
   const deleted=new MemoryBrowser([row],()=>undefined,theme,()=>18,()=>{},()=>{},()=>true);
-  deleted.handleInput("\r"); assert.match(deleted.render(60).join("\n"),/已删除/);
+  deleted.handleInput("\r"); assert.match(deleted.render(60).join("\n"),/deleted/);
 });
 test("loader errors stay in overlay; refreshed detail updates status; small height is explicit", () => {
   const broken=new MemoryBrowser([row],()=>{throw Error('SQLITE_BUSY private detail');},theme,()=>18,()=>{},()=>{},()=>true);
   assert.doesNotThrow(()=>broken.handleInput('\r'));
-  assert.match(broken.render(60).join('\n'),/读取失败/);
+  assert.match(broken.render(60).join('\n'),/Unable to load/);
   assert.ok(!broken.render(60).join('').includes('SQLITE_BUSY'));
   const view=new MemoryBrowser([{...row,project:'long_project_'.repeat(10),vector:'待嵌入'}],()=>({...row,summary}),theme,()=>18,()=>{},()=>{},()=>true);
   assert.match(view.render(60).join('\n'),/Corrected activity/);
   view.handleInput('\r'); view.handleInput('\x1b'); assert.match(view.render(80).join('\n'),/向量就绪/);
   const tiny=new MemoryBrowser([row],()=>({...row,summary}),theme,()=>4,()=>{},()=>{},()=>true);
-  tiny.handleInput('\r'); assert.match(tiny.render(40).join('\n'),/终端太矮/);
+  tiny.handleInput('\r'); assert.match(tiny.render(40).join('\n'),/Increase terminal height/);
 });
 test("list, detail and empty states have aligned theme borders within width/height budgets", () => {
   const colored = { fg: (_: string, s: string) => `\x1b[36m${s}\x1b[0m`, bold: (s: string) => s } as any;
@@ -60,5 +60,5 @@ test("body removes terminal escapes without flattening paragraphs; non-TUI never
   assert.equal(cleanBody("a\n\n\x1b[31mb\x1b[0m\x1b]52;c;bad\x07\n尾"),"a\n\nb\n尾");
   let notified="";
   await showMemoryBrowser({mode:"rpc",hasUI:true,ui:{notify:(s:string)=>{notified=s;},custom:()=>{throw Error('unexpected');}}} as any,[row],()=>undefined,()=>true,()=>{});
-  assert.match(notified,/终端/); assert.ok(!notified.includes("TASK AS"));
+  assert.match(notified,/TUI mode/); assert.ok(!notified.includes("TASK AS"));
 });

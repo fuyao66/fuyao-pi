@@ -32,7 +32,7 @@ export class ActivityFeed {
   clear(): void { this.events = []; }
 }
 export function activityLine(event: MemoryActivity): string {
-  const time = new Date(event.at).toLocaleTimeString("zh-CN", { hour12: false });
-  const label = { summary: "摘要入库", vector: "向量保存", state: "后台状态", error: "处理异常" }[event.type];
-  return `${time} ${label} · ${event.message || [event.project, event.topic || event.blockId].filter(Boolean).join(" / ")}${event.truncated ? " [前缀截断]" : ""}`;
+  const time = new Date(event.at).toLocaleTimeString("en-GB", { hour12: false });
+  const label = { summary: "Summary indexed", vector: "Vector saved", state: "Background status", error: "Processing error" }[event.type];
+  return `${time} ${label} · ${event.message || [event.project, event.topic || event.blockId].filter(Boolean).join(" / ")}${event.truncated ? " [prefix only]" : ""}`;
 }

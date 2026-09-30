@@ -21,7 +21,7 @@ test("cards batch, cap previews, sanitize controls and stay outside model contex
   const data=(entries[0] as any).data;
   assert.equal(data.summaries,30);assert.equal(data.vectors,30);assert.equal(data.records.length,12);
   assert.ok(data.records.every((r:any)=>r.summary.length<=200&&!r.summary.includes('\x1b')));
-  assert.ok(cardLines(data,true).some(x=>x.includes('2 维')));
+  assert.ok(cardLines(data,true).some(x=>x.includes('2 dimensions')));
   assert.deepEqual(buildSessionContext(entries,sm.getLeafId()).messages,[]);
   cards.flush();assert.equal(sm.getEntries().length,1);
   cards.state('backoff');cards.flush();cards.state('backoff');cards.flush();assert.equal(sm.getEntries().length,2);
@@ -68,8 +68,8 @@ test("manual-only cycles flush concurrent summaries and never promise automatic 
   const cards=new ActivityCards(x=>emitted.push(x),()=>true);
   cards.beginBatch();cards.saved('summary',[{blockId:'later'}]);cards.endBatch(true);
   assert.equal(emitted.length,1);assert.equal(emitted[0].outcome,'failed');
-  assert.match(cardLines(emitted[0],false).join('\n'),/手动重试/);
-  assert.doesNotMatch(cardLines(emitted[0],false).join('\n'),/后台.*重试/);
+  assert.match(cardLines(emitted[0],false).join('\n'),/please retry/);
+  assert.doesNotMatch(cardLines(emitted[0],false).join('\n'),/retry.*background/);
   t.mock.timers.tick(750);assert.equal(emitted.length,2);assert.equal(emitted[1].summaries,1);
   assert.equal(emitted[1].outcome,undefined);cards.stop();
 });

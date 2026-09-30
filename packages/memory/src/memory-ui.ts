@@ -9,12 +9,12 @@ export interface ActivityCard {
   outcome?: "completed" | "retry" | "failed";
 }
 export function cardLines(card: ActivityCard, expanded: boolean): string[] {
-  const lines = [card.outcome === "completed" ? "Memory · 本轮处理完成" : "Memory · 自动记忆"];
-  if (card.summaries || card.vectors) lines.push(`摘要入库 ${card.summaries} 条 · 向量保存 ${card.vectors} 条`);
-  if (card.vectors) lines.push(`${preview(card.model)} · ${card.dimensions} 维`);
-  if (card.outcome === "retry") lines.push("已入库的摘要及已保存的向量保留；未完成向量等待后台重试。");
-  if (card.outcome === "failed") lines.push("本次向量补建失败，已保存的数据保留；请手动重试。");
-  if (card.state) lines.push(card.state === "backoff" ? "Embedding 暂时失败，后台退避重试；关键词检索仍可用。" : "后台补建已退出退避；本轮处理结束或继续增量补建。");
+  const lines = [card.outcome === "completed" ? "Memory · Batch complete" : "Memory · Background activity"];
+  if (card.summaries || card.vectors) lines.push(`Summaries indexed: ${card.summaries} · Vectors saved: ${card.vectors}`);
+  if (card.vectors) lines.push(`${preview(card.model)} · ${card.dimensions} dimensions`);
+  if (card.outcome === "retry") lines.push("Saved data is retained; remaining vectors will retry in the background.");
+  if (card.outcome === "failed") lines.push("Vector backfill failed. Saved data is retained; please retry.");
+  if (card.state) lines.push(card.state === "backoff" ? "Embedding unavailable; retrying with backoff. Keyword search remains available." : "Backoff ended; background indexing is resuming or complete.");
   // Same source/block appears once, even when both indexing and embedding committed.
   const combined = new Map<string, typeof card.records[number]>();
   card.records.forEach((row, i) => {
@@ -25,11 +25,11 @@ export function cardLines(card: ActivityCard, expanded: boolean): string[] {
   const allRecords = [...combined.values()];
   const records = expanded ? allRecords : allRecords.slice(0, 3);
   for (const row of records) {
-    lines.push(`· ${row.type === "vector" ? "向量" : "摘要"} ${preview(row.project, 40)} / ${preview(row.topic || row.blockId, 80)}${row.truncated ? " [前缀截断]" : ""}`);
+    lines.push(`· ${row.type === "vector" ? "Vector" : "Summary"} ${preview(row.project, 40)} / ${preview(row.topic || row.blockId, 80)}${row.truncated ? " [prefix only]" : ""}`);
     if (expanded) lines.push(`  ${preview(row.blockId, 40)} · ${preview(row.summary, 200)}`);
   }
-  if (!expanded && allRecords.length > records.length) lines.push(`另有 ${allRecords.length - records.length} 条详情，可展开查看`);
-  if (expanded) lines.push(`本次处理 · ${new Date(card.at).toLocaleString("zh-CN")}`);
+  if (!expanded && allRecords.length > records.length) lines.push(`${allRecords.length - records.length} more entries; expand to view`);
+  if (expanded) lines.push(`Batch · ${new Date(card.at).toLocaleString("en-GB")}`);
   return lines;
 }
 export function registerMemoryCards(pi: ExtensionAPI): void {
@@ -116,8 +116,8 @@ export class ActivityCards {
 /** One discoverable entry point; dialogs stay out of model context. */
 export async function memoryMenu(ctx: ExtensionContext, status: string, current: () => boolean): Promise<string | undefined> {
   if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui?.notify?.(status, "info"); return undefined; }
-  const labels = ["浏览已存记忆", "本次活动", "刷新扫描", "补齐向量", "查看来源", "清理旧记忆"];
-  const selected = await ctx.ui.select(`Memory · 记忆管理\n${status}`, labels);
+  const labels = ["Browse memories", "Session activity", "Rescan sources", "Backfill vectors", "View sources", "Prune old memories"];
+  const selected = await ctx.ui.select(`Memory · Manage\n${status}`, labels);
   if (!current()) return undefined;
   return ["browse", "activity", "rescan", "embed backfill", "sources", "prune"][labels.indexOf(selected ?? "")];
 }

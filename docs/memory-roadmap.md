@@ -14,10 +14,10 @@ Deliver a small BCP-compatible project and long-term memory plugin: correctly sy
 1. **Implemented and tested: revision consistency.** Preserve row IDs while updating summary/topic/references together; update FTS and invalidate content-dependent vectors, preserve tombstones. Test revisions, rollback and idempotence.
 2. **Pending: project identity and policy.** Stable project identity including SSH workspace changes; consistent source/block policy for ingestion, retrieval and uploads; project-first retrieval.
 3. **Pending: curated memory.** Sourced project/global entries, authorized save/update, replacement history, `/memory` management and concise tool guidance. No automatic promotion of model guesses to user requirements.
-4. **Pending: English interface consistency.** Audit maintained plugin runtime text; translate UI labels, not stored content. Respect concurrently edited UI files.
+4. **Implemented and tested: English interface consistency.** Memory menus, browser, activity cards, status and confirmation messages now use English. Runtime scans found no Chinese copy in remote-ssh, Advisor or UI extension code. Chinese credential detection and user-authored memories/test fixtures are deliberately preserved; concurrent UI edits untouched.
 
 ## Progress
 - Design: `memory-design.md`; baseline audit: `memory-audit.md` (historical findings, not all fixed).
 - Milestone 1 implemented: stable-ID transactional updates, FTS update trigger, content-only vector invalidation, one-time watermark reset on upgrade to repair previously stale rows. Tombstones retained; no production database rewrite during development.
 - Verification: full `bun run check` passes, including isolated A→B revision, keyword replacement, pointer-only update (no extra embedding), rollback/no notification, no-op scans, reopen migration and tombstone regression. Existing Memory suites pass (35 Node test cases plus self-tests).
-- Next: English runtime copy consistency, then milestone 2. Each functional milestone gets an independent commit; this document records remaining work.
+- English runtime copy verified with the full check suite (including narrow browser/card rendering). Next: milestone 2. Each functional milestone gets an independent commit; this document records remaining work.
