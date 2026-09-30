@@ -35,8 +35,11 @@ test("real extension scans trigger background startup/incremental embedding; del
       const wait=()=>new Promise(r=>setTimeout(r,1400));
       await wait(); assert.equal(uploads,1);
       await new Promise(r=>setTimeout(r,800)); assert.equal(cards.length,1); assert.equal(cards[0].vectors,1);
-      add('b2'); await handlers.get('agent_settled')({},ctx); await wait(); assert.equal(uploads,2);
-      await new Promise(r=>setTimeout(r,800)); assert.equal(cards.length,2);
+      writeFileSync(source,JSON.stringify({blocks:[{blockId:'b2',summary:'synthetic summary',tier:1,active:true}]}));
+      await commands.get('memory').handler('rescan',ctx);
+      await new Promise(r=>setTimeout(r,850)); assert.equal(cards.length,1,'indexing must not flush ahead of embedding');
+      await wait(); assert.equal(uploads,2); assert.equal(cards.length,2);
+      assert.equal(cards[1].summaries,1);assert.equal(cards[1].vectors,1);
       add('b3');
       const before=cards.length;
       writeFileSync(join(process.env.HOME,'.pi/sources'),JSON.stringify({id:'overlap',adapter:'opencode-acp',root:process.env.HOME,pattern:'allowed.json'}));

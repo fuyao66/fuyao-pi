@@ -6,18 +6,29 @@ export const MEMORY_CARD = "fuyao-memory-activity";
 export interface ActivityCard {
   summaries: number; vectors: number; records: (MemoryRecord & { type: "summary" | "vector" })[];
   model?: string; dimensions?: number; state?: "backoff" | "resumed"; at: number;
+  outcome?: "completed" | "retry" | "failed";
 }
 export function cardLines(card: ActivityCard, expanded: boolean): string[] {
-  const lines = ["Memory · 自动记忆"];
-  if (card.summaries) lines.push(`已索引 ${card.summaries} 条压缩摘要`);
-  if (card.vectors) lines.push(`已保存 ${card.vectors} 条向量 · ${preview(card.model)} · ${card.dimensions} 维`);
+  const lines = [card.outcome === "completed" ? "Memory · 本轮处理完成" : "Memory · 自动记忆"];
+  if (card.summaries || card.vectors) lines.push(`摘要入库 ${card.summaries} 条 · 向量保存 ${card.vectors} 条`);
+  if (card.vectors) lines.push(`${preview(card.model)} · ${card.dimensions} 维`);
+  if (card.outcome === "retry") lines.push("已入库的摘要及已保存的向量保留；未完成向量等待后台重试。");
+  if (card.outcome === "failed") lines.push("本次向量补建失败，已保存的数据保留；请手动重试。");
   if (card.state) lines.push(card.state === "backoff" ? "Embedding 暂时失败，后台退避重试；关键词检索仍可用。" : "后台补建已退出退避；本轮处理结束或继续增量补建。");
-  const records = expanded ? card.records : card.records.slice(0, 3);
+  // Same source/block appears once, even when both indexing and embedding committed.
+  const combined = new Map<string, typeof card.records[number]>();
+  card.records.forEach((row, i) => {
+    const key = row.identity ?? `unidentified-${i}`;
+    const previous = combined.get(key);
+    combined.set(key, { ...row, type: previous?.type === "vector" ? "vector" : row.type });
+  });
+  const allRecords = [...combined.values()];
+  const records = expanded ? allRecords : allRecords.slice(0, 3);
   for (const row of records) {
     lines.push(`· ${row.type === "vector" ? "向量" : "摘要"} ${preview(row.project, 40)} / ${preview(row.topic || row.blockId, 80)}${row.truncated ? " [前缀截断]" : ""}`);
     if (expanded) lines.push(`  ${preview(row.blockId, 40)} · ${preview(row.summary, 200)}`);
   }
-  if (!expanded && card.records.length > records.length) lines.push(`另有 ${card.records.length - records.length} 条详情，可展开查看`);
+  if (!expanded && allRecords.length > records.length) lines.push(`另有 ${allRecords.length - records.length} 条详情，可展开查看`);
   if (expanded) lines.push(`本次处理 · ${new Date(card.at).toLocaleString("zh-CN")}`);
   return lines;
 }
@@ -37,19 +48,57 @@ export class ActivityCards {
   private stopped = false;
   private card: ActivityCard = this.empty();
   private lastBackoff = false;
+  private batch?: ActivityCard;
   constructor(private emit: (card: ActivityCard) => void, private current: () => boolean,
-    private sanitize: (text: string) => string = text => text, private delay = 750) {}
+    private sanitize: (text: string) => string = text => text, private delay = 750,
+    private automatic = false) {}
+  beginBatch(): boolean {
+    if (this.stopped || !this.current() || this.batch) return false;
+    if (this.timer) clearTimeout(this.timer); this.timer = undefined;
+    this.batch = this.card; this.card = this.empty();
+    return true;
+  }
+  endBatch(failed = false): void {
+    const batch = this.batch; this.batch = undefined;
+    if (!batch) return;
+    batch.outcome = failed ? this.automatic ? "retry" : "failed" : "completed";
+    if (failed && this.automatic && !this.lastBackoff) { batch.state = "backoff"; this.lastBackoff = true; }
+    else if (!failed && this.lastBackoff) { batch.state = "resumed"; this.lastBackoff = false; }
+    this.deliver(batch);
+    if (!this.automatic && (this.card.summaries || this.card.vectors)) this.arm();
+    // New summaries collected during HTTP belong to the next batch, not this one.
+  }
+  private deliver(card: ActivityCard): void {
+    if (!this.stopped && this.current() && (card.summaries || card.vectors || card.state || card.outcome === "failed")) {
+      try { this.emit(card); } catch { /* Rendering must never break indexing. */ }
+    }
+  }
   private empty(): ActivityCard { return { summaries: 0, vectors: 0, records: [], at: Date.now() }; }
   saved(type: "summary" | "vector", records: MemoryRecord[], count = records.length, model?: string, dimensions?: number): void {
     if (this.stopped || !this.current() || !count) return;
-    if (type === "summary") this.card.summaries += count; else this.card.vectors += count;
-    if (model) { this.card.model = preview(this.sanitize(model)); this.card.dimensions = dimensions; }
-    for (const row of records) this.card.records.push({ ...displayRecord(row, this.sanitize), type });
-    this.card.records = this.card.records.slice(-12);
-    this.arm();
+    const target = type === "vector" && this.batch ? this.batch : this.card;
+    if (type === "summary") target.summaries += count; else target.vectors += count;
+    if (model) { target.model = preview(this.sanitize(model)); target.dimensions = dimensions; }
+    for (const row of records) target.records.push({ ...displayRecord(row, this.sanitize), type });
+    target.records = target.records.slice(-12);
+    if ((!this.automatic || this.lastBackoff) && !this.batch) {
+      if (this.lastBackoff) this.card.outcome = "retry";
+      this.arm();
+    }
   }
   state(state: string): void {
     if (this.stopped || !this.current()) return;
+    if (this.automatic) {
+      // Batch completion owns normal feedback. During backoff don't retain new
+      // summary notices for minutes; they are stored but their vectors must wait.
+      if (state === "idle" && !this.batch) this.flush();
+      if (state === "backoff") {
+        this.card.outcome = "retry";
+        if (!this.lastBackoff) { this.card.state = "backoff"; this.lastBackoff = true; }
+        this.flush();
+      }
+      return;
+    }
     if (state === "backoff" && !this.lastBackoff) { this.card.state = "backoff"; this.lastBackoff = true; this.arm(); }
     else if ((state === "idle" || state === "scheduled") && this.lastBackoff) { this.card.state = "resumed"; this.lastBackoff = false; this.arm(); }
   }
@@ -59,11 +108,9 @@ export class ActivityCards {
   flush(): void {
     if (this.timer) clearTimeout(this.timer); this.timer = undefined;
     const card = this.card; this.card = this.empty();
-    if (!this.stopped && this.current() && (card.summaries || card.vectors || card.state)) {
-      try { this.emit(card); } catch { /* Rendering must never break indexing. */ }
-    }
+    this.deliver(card);
   }
-  stop(): void { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; this.card = this.empty(); }
+  stop(): void { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; this.card = this.empty(); this.batch = undefined; }
 }
 
 /** One discoverable entry point; dialogs stay out of model context. */

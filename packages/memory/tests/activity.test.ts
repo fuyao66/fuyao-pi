@@ -29,6 +29,50 @@ test("cards batch, cap previews, sanitize controls and stay outside model contex
   cards.saved('summary',rows);valid=false;cards.flush();assert.equal(sm.getEntries().length,3);
   cards.stop();cards.saved('summary',rows);cards.flush();assert.equal(sm.getEntries().length,3);
 });
+test("automatic cards wait through scheduled/network time and report each completed batch once", async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const emitted:any[]=[]; const cards=new ActivityCards(x=>emitted.push(x),()=>true,x=>x,750,true);
+  const row={identity:'a'.repeat(64),blockId:'b1',project:'test',topic:'One'};
+  cards.saved('summary',[row],2); cards.state('scheduled');
+  t.mock.timers.tick(5000); assert.equal(emitted.length,0);
+  assert.equal(cards.beginBatch(),true); assert.equal(cards.beginBatch(),false);
+  t.mock.timers.tick(10000); assert.equal(emitted.length,0);
+  cards.saved('vector',[row],2,'model',2); cards.endBatch();
+  assert.equal(emitted.length,1);assert.equal(emitted[0].summaries,2);assert.equal(emitted[0].vectors,2);
+  assert.equal(cardLines(emitted[0],true).filter(x=>x.startsWith('·')).length,1);
+  cards.state('idle');t.mock.timers.tick(5000);assert.equal(emitted.length,1);cards.stop();
+});
+test("cycles separate concurrent scans, preserve partial saves on failure, and bound startup batches",()=>{
+  const emitted:any[]=[];let current=true;const cards=new ActivityCards(x=>emitted.push(x),()=>current,x=>x,750,true);
+  const row={identity:'a'.repeat(64),blockId:'b1'};const other={identity:'b'.repeat(64),blockId:'b1'};
+  cards.saved('summary',[row]);cards.beginBatch();cards.saved('summary',[other]);
+  cards.saved('vector',[row],1,'model',2);cards.endBatch(true);cards.state('backoff');
+  assert.equal(emitted[0].summaries,1);assert.equal(emitted[0].vectors,1);assert.equal(emitted[0].outcome,'retry');
+  assert.equal(emitted[1].summaries,1);assert.equal(emitted[1].vectors,0);
+  cards.beginBatch();cards.endBatch(true);cards.state('backoff');assert.equal(emitted.length,2);
+  cards.beginBatch();cards.saved('vector',[other],1,'model',2);cards.endBatch();assert.equal(emitted[2].state,'resumed');
+  for(let i=0;i<3;i++){cards.beginBatch();cards.saved('vector',Array(20).fill(row),20,'model',2);cards.endBatch();}
+  assert.equal(emitted.length,6);assert.ok(emitted.every(x=>x.records.length<=12));
+  cards.saved('summary',[row,other]);cards.beginBatch();current=false;cards.endBatch();assert.equal(emitted.length,6);
+  cards.stop();
+});
+test("disabled auto emits without embedding, and identities from different sources are not merged", (t)=>{
+  t.mock.timers.enable({apis:['setTimeout']});const emitted:any[]=[];
+  const cards=new ActivityCards(x=>emitted.push(x),()=>true);
+  cards.saved('summary',[{identity:'a'.repeat(64),blockId:'b1'},{identity:'b'.repeat(64),blockId:'b1'}]);
+  t.mock.timers.tick(750);assert.equal(emitted.length,1);assert.equal(emitted[0].vectors,0);
+  assert.equal(cardLines(emitted[0],false).filter(x=>x.startsWith('·')).length,2);cards.stop();
+});
+test("manual-only cycles flush concurrent summaries and never promise automatic retry", (t)=>{
+  t.mock.timers.enable({apis:['setTimeout']});const emitted:any[]=[];
+  const cards=new ActivityCards(x=>emitted.push(x),()=>true);
+  cards.beginBatch();cards.saved('summary',[{blockId:'later'}]);cards.endBatch(true);
+  assert.equal(emitted.length,1);assert.equal(emitted[0].outcome,'failed');
+  assert.match(cardLines(emitted[0],false).join('\n'),/手动重试/);
+  assert.doesNotMatch(cardLines(emitted[0],false).join('\n'),/后台.*重试/);
+  t.mock.timers.tick(750);assert.equal(emitted.length,2);assert.equal(emitted[1].summaries,1);
+  assert.equal(emitted[1].outcome,undefined);cards.stop();
+});
 test("all display fields are sanitized before card persistence and activity browsing",()=>{
   const sanitize=(x:string)=>withoutPaths(redactSecrets(x).text);
   const secret='api_key=synthetic-secret-123456';const path='/home/alice/.pi/agent/sessions/private.jsonl';

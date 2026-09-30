@@ -51,7 +51,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
-import { loadEmbeddingConfig } from "./embeddings.js";
+import { hash, loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory } from "./hybrid.js";
 import { AutoEmbed } from "./auto-embed.js";
 import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
@@ -1013,7 +1013,7 @@ export class MemoryDb {
         if (r.changes > 0) {
           inserted++;
           if (savedRecords.length >= 80) savedRecords.shift();
-          savedRecords.push({ blockId: b.blockId, project, topic: redactedTopic.text, summary });
+          savedRecords.push({ identity: hash(JSON.stringify([sourceFile, kind, b.blockId])), blockId: b.blockId, project, topic: redactedTopic.text, summary });
         } else if (updMsgIds.run(msgIdsJson, sourceFile, b.blockId, msgIdsJson).changes > 0) refreshed++;
       }
       this.db.exec("COMMIT");
@@ -1815,7 +1815,14 @@ export default async function factory(pi: ExtensionAPI) {
     if (!automatic || generation !== sessionGeneration || dbClosed) return;
     if (!auto) {
       const worker = getHybrid(); // Capture this session's instance, never re-create from an old timer.
-      auto = new AutoEmbed(() => worker.backfill(20, uploadPermissions), () => generation === sessionGeneration && !dbClosed,
+      auto = new AutoEmbed(async () => {
+        const output = cards;
+        const owned = output?.beginBatch();
+        let failed = false;
+        try { return await worker.backfill(20, uploadPermissions); }
+        catch (error) { failed = true; throw error; }
+        finally { if (owned) output?.endBatch(failed); }
+      }, () => generation === sessionGeneration && !dbClosed,
         (message) => logLine(message), undefined, (state) => cards?.state(state.state));
     }
     auto.trigger();
@@ -1831,7 +1838,7 @@ export default async function factory(pi: ExtensionAPI) {
     if (ctx.mode === "tui" && !(Number(process.env.PI_ACP_DELEGATE_DEPTH ?? "0") > 0)) {
       cards = new ActivityCards((data) => pi.appendEntry(MEMORY_CARD, data),
         () => generation === sessionGeneration && !dbClosed,
-        (text) => withoutPaths(redactSecrets(text).text));
+        (text) => withoutPaths(redactSecrets(text).text), 750, automatic);
     }
     const store = getDb(); store.open();
     store.onStored = (records, count) => {
@@ -2177,8 +2184,14 @@ export default async function factory(pi: ExtensionAPI) {
           if (generation !== sessionGeneration || dbClosed) throw new Error("Embedding session expired");
           await scanSources();
           if (generation !== sessionGeneration || dbClosed) throw new Error("Embedding session expired");
-          const result = await getHybrid().backfill(Number(match[1] ?? 20));
-          ctx.ui?.notify?.(`Embedding batch done: uploaded ${result.uploaded}, stored ${result.stored}, skipped ${result.skipped}; indexed ${result.status.indexed}/${result.status.total}. Repeat to resume.`, "info");
+          const output = cards;
+          const owned = output?.beginBatch();
+          let failed = false;
+          try {
+            const result = await getHybrid().backfill(Number(match[1] ?? 20));
+            if (!output || result.stored === 0) ctx.ui?.notify?.(`Embedding batch done: uploaded ${result.uploaded}, stored ${result.stored}, skipped ${result.skipped}; indexed ${result.status.indexed}/${result.status.total}.`, "info");
+          } catch (error) { failed = true; throw error; }
+          finally { if (owned) output?.endBatch(failed); triggerAuto(generation); }
           return;
         }
         if (want === "rescan") {

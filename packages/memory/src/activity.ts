@@ -1,5 +1,5 @@
 export interface MemoryRecord {
-  blockId: string; project?: string; topic?: string; summary?: string; truncated?: boolean;
+  identity?: string; blockId: string; project?: string; topic?: string; summary?: string; truncated?: boolean;
 }
 export type MemoryActivity = MemoryRecord & {
   type: "summary" | "vector" | "state" | "error"; at: number; message?: string;
@@ -13,7 +13,7 @@ export function preview(value: unknown, limit = 120): string {
     .replace(/\s+/g, " ").trim().slice(0, limit);
 }
 export function displayRecord(event: MemoryRecord, sanitize: (text: string) => string): MemoryRecord {
-  return { blockId: preview(sanitize(event.blockId), 60), project: preview(sanitize(event.project ?? ""), 60),
+  return { identity: /^[a-f0-9]{64}$/.test(event.identity ?? "") ? event.identity : undefined, blockId: preview(sanitize(event.blockId), 60), project: preview(sanitize(event.project ?? ""), 60),
     topic: preview(sanitize(event.topic ?? ""), 100), summary: preview(sanitize(event.summary ?? ""), 200),
     truncated: event.truncated };
 }

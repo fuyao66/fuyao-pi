@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MemoryRecord } from "./activity.js";
-import { EmbeddingClient, type EmbeddingConfig, namespace, prepareText, encodeVector, cosineBlob } from "./embeddings.js";
+import { hash, EmbeddingClient, type EmbeddingConfig, namespace, prepareText, encodeVector, cosineBlob } from "./embeddings.js";
 
 interface Store { db: any; closed: boolean; search(query: string, opts?: any): { mode: string; rows: any[] } }
 export function ensureVectorSchema(store: Store): void {
@@ -130,7 +130,7 @@ export class HybridMemory {
             if (!present || this.input(present).hash !== inputs[j].hash) { skipped++; return; }
             this.store.db.prepare("INSERT OR REPLACE INTO memory_vectors VALUES (?,?,?,?,?,?)").run(row.id, this.ns, inputs[j].hash, this.config.dimensions, encodeVector(vectors[j]), Number(inputs[j].truncated));
             stored++;
-            committed.push({ blockId: row.blockId, project: row.project, topic: row.topic,
+            committed.push({ identity: hash(JSON.stringify([row.sourceFile, row.kind, row.blockId])), blockId: row.blockId, project: row.project, topic: row.topic,
               summary: inputs[j].text, truncated: inputs[j].truncated });
           });
           this.store.db.exec("COMMIT");
