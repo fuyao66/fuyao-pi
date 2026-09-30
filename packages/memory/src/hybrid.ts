@@ -66,6 +66,15 @@ export class HybridMemory {
       LEFT JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=?
       ${project ? "WHERE s.project=?" : ""} ORDER BY b.id LIMIT ?`).iterate(this.ns, ...(project ? [project] : []), this.config.maxBlocks);
   }
+  vectorState(id: number): "missing" | "stale" | "ready" | "truncated" {
+    if (!this.valid()) return "missing";
+    const row = this.store.db.prepare(`SELECT b.topic,b.summary,v.input_hash AS inputHash,v.dimensions,v.vector,v.truncated
+      FROM blocks b LEFT JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=? WHERE b.id=?`).get(this.ns,id);
+    if (!row?.vector) return "missing";
+    if (row.inputHash !== this.input(row).hash || row.dimensions !== this.config.dimensions) return "stale";
+    try { cosineBlob(row.vector,this.config.dimensions); return row.truncated ? "truncated" : "ready"; }
+    catch { return "stale"; }
+  }
   status(project?: string) {
     const total = this.store.db.prepare(`SELECT count(*) AS n FROM blocks b JOIN sources s ON s.source_file=b.source_file ${project ? "WHERE s.project=?" : ""}`).get(...(project ? [project] : [])).n;
     let indexed = 0, truncated = 0, scanned = 0;

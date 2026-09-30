@@ -54,8 +54,9 @@ import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory } from "./hybrid.js";
 import { AutoEmbed } from "./auto-embed.js";
-import { ActivityFeed, activityLine, displayRecord, preview, type MemoryRecord } from "./activity.js";
+import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
 import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
+import { cleanBody, showMemoryBrowser, type BrowserRow } from "./memory-browser.js";
 
 // ---------------------------------------------------------------------------
 // Constants / config / logging
@@ -1774,6 +1775,7 @@ export default async function factory(pi: ExtensionAPI) {
   let hybrid: HybridMemory | null = null;
   let auto: AutoEmbed | null = null;
   let cards: ActivityCards | null = null;
+  let closeBrowser: (() => void) | undefined;
   const sanitizeDisplay = (text: string) => withoutPaths(redactSecrets(text).text);
   const feed = new ActivityFeed(80, sanitizeDisplay);
   registerMemoryCards(pi);
@@ -1822,6 +1824,7 @@ export default async function factory(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
     stopEmbedding();
+    closeBrowser?.(); closeBrowser = undefined;
     cards?.stop(); cards = null; feed.clear();
     dbClosed = false; // a new session may reuse this extension instance after a shutdown
     const generation = ++sessionGeneration;
@@ -1889,6 +1892,7 @@ export default async function factory(pi: ExtensionAPI) {
     // Remember which session this shutdown belongs to: if a new session_start lands while the grace
     // period (or the final scan) is still running, closing the store here would close and latch the
     // *new* session's store. The check below is synchronous with the latch, so no window remains.
+    closeBrowser?.(); closeBrowser = undefined;
     cards?.stop(); cards = null;
     if (db) db.onStored = undefined;
     stopEmbedding();
@@ -2130,12 +2134,28 @@ export default async function factory(pi: ExtensionAPI) {
             want = `prune ${days.trim()}`;
           }
         }
-        if (want === "browse") {
-          const recent = getDb().db.prepare(`SELECT b.block_id AS blockId,b.topic,b.summary,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file ORDER BY b.id DESC LIMIT 10`).all();
-          const activity = feed.recent(10).map(activityLine);
-          const lines = ["本次运行活动", ...(activity.length ? activity : ["暂无新入库活动"]), "", "最近索引的摘要（最多 10 条）",
-            ...recent.flatMap((r) => { const d = displayRecord(r, sanitizeDisplay); return [`${d.project} / ${d.topic || d.blockId}`, d.summary ?? ""]; })];
-          ctx.ui?.notify?.(lines.join("\n"), "info"); return;
+        if (want === "browse" || want === "activity") {
+          const ownClose = (close?: () => void) => { if (current()) closeBrowser = close; else close?.(); };
+          if (want === "activity") {
+            const events = feed.recent(80);
+            const rows: BrowserRow[] = events.map((event, index) => ({ id: String(index), title: event.topic || event.blockId,
+              project: event.project || "未分类", blockId: event.blockId, date: new Date(event.at).toLocaleTimeString("zh-CN"),
+              vector: event.type === "vector" ? "向量已保存" : "摘要已入库" }));
+            await showMemoryBrowser(ctx, rows, id => { const i = Number(id); return rows[i] ? { ...rows[i], summary: `${events[i].summary || "暂无预览"}\n\n（本次运行活动预览；完整内容请在已存记忆中查看。）` } : undefined; }, current, ownClose, "本次活动");
+          } else {
+            const query = `SELECT b.id,b.block_id AS blockId,b.topic,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file`;
+            const describe = (r): BrowserRow => ({ id: String(r.id), title: preview(sanitizeDisplay(r.topic || r.blockId), 160),
+              project: preview(sanitizeDisplay(r.project ?? "未分类"), 60), blockId: preview(sanitizeDisplay(r.blockId), 60),
+              date: Number.isFinite(r.createdAt) ? new Date(r.createdAt).toLocaleDateString("zh-CN") : "日期未知",
+              vector: embeddingConfig.enabled ? ({ missing: "待嵌入", stale: "需更新", ready: "向量就绪", truncated: "向量就绪（前缀）" }[getHybrid().vectorState(r.id)]) : "Embedding 关闭" });
+            const rows = getDb().db.prepare(`${query} ORDER BY b.id DESC LIMIT 50`).all().map(describe);
+            await showMemoryBrowser(ctx, rows, id => {
+              if (!current()) return undefined;
+              const row = getDb().db.prepare(`SELECT b.id,b.block_id AS blockId,b.topic,b.summary,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file WHERE b.id=?`).get(Number(id));
+              return row ? { ...describe(row), summary: cleanBody(sanitizeDisplay(row.summary)) } : undefined;
+            }, current, ownClose);
+          }
+          return;
         }
         if (want.startsWith("embed")) {
           if (want === "embed status") {

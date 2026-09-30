@@ -45,6 +45,11 @@ test("real extension scans trigger background startup/incremental embedding; del
       await handlers.get('agent_settled')({},ctx); await handlers.get('session_shutdown')({},ctx); await wait(); assert.equal(uploads,2);
       process.env.PI_ACP_DELEGATE_DEPTH='1'; await factory(pi); await handlers.get('session_start')({},ctx); await wait(); assert.equal(uploads,2);
       assert.equal(cards.length,before,'shutdown and delegates do not emit stale cards');
+      seed.db.prepare('UPDATE blocks SET summary=? WHERE block_id=?').run('full detail '.repeat(100)+'DETAIL_TAIL','b3');
+      let browserOutput='';
+      ctx.ui.custom=async(build)=>{ const theme={fg:(_c,s)=>s,bold:s=>s}; const view=build({terminal:{rows:24},requestRender:()=>{}},theme,{},()=>{});
+        assert.ok(!view.render(60).join('').includes('DETAIL_TAIL')); view.handleInput('\\r'); view.render(60); view.handleInput('\\x1b[F'); browserOutput=view.render(60).join(''); };
+      await commands.get('memory').handler('browse',ctx); assert.match(browserOutput,/DETAIL_TAIL/);
       seed.db.prepare('UPDATE blocks SET created_at=1 WHERE block_id=?').run('b1');
       await commands.get('memory').handler('prune 30',ctx);assert.equal(confirms,1);assert.equal(seed.db.prepare('SELECT count(*) AS n FROM blocks').get().n,3);
       allowDelete=true; await commands.get('memory').handler('prune 30',ctx);assert.equal(confirms,2);assert.equal(seed.db.prepare('SELECT count(*) AS n FROM blocks').get().n,2);

@@ -69,8 +69,8 @@ export class ActivityCards {
 /** One discoverable entry point; dialogs stay out of model context. */
 export async function memoryMenu(ctx: ExtensionContext, status: string, current: () => boolean): Promise<string | undefined> {
   if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui?.notify?.(status, "info"); return undefined; }
-  const labels = ["查看摘要与活动", "刷新扫描", "补齐向量", "查看来源", "清理旧记忆"];
+  const labels = ["浏览已存记忆", "本次活动", "刷新扫描", "补齐向量", "查看来源", "清理旧记忆"];
   const selected = await ctx.ui.select(`Memory · 记忆管理\n${status}`, labels);
   if (!current()) return undefined;
-  return ["browse", "rescan", "embed backfill", "sources", "prune"][labels.indexOf(selected ?? "")];
+  return ["browse", "activity", "rescan", "embed backfill", "sources", "prune"][labels.indexOf(selected ?? "")];
 }
