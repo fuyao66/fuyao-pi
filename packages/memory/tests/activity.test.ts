@@ -21,7 +21,7 @@ test("cards batch, cap previews, sanitize controls and stay outside model contex
   const data=(entries[0] as any).data;
   assert.equal(data.summaries,30);assert.equal(data.vectors,30);assert.equal(data.records.length,12);
   assert.ok(data.records.every((r:any)=>r.summary.length<=200&&!r.summary.includes('\x1b')));
-  assert.ok(cardLines(data,true).some(x=>x.includes('2 dimensions')));
+  assert.deepEqual(cardLines(data,true), ['Memory · Indexed 30 summaries · Saved 30 vectors']);
   assert.deepEqual(buildSessionContext(entries,sm.getLeafId()).messages,[]);
   cards.flush();assert.equal(sm.getEntries().length,1);
   cards.state('backoff');cards.flush();cards.state('backoff');cards.flush();assert.equal(sm.getEntries().length,2);
@@ -39,7 +39,7 @@ test("automatic cards wait through scheduled/network time and report each comple
   t.mock.timers.tick(10000); assert.equal(emitted.length,0);
   cards.saved('vector',[row],2,'model',2); cards.endBatch();
   assert.equal(emitted.length,1);assert.equal(emitted[0].summaries,2);assert.equal(emitted[0].vectors,2);
-  assert.equal(cardLines(emitted[0],true).filter(x=>x.startsWith('·')).length,1);
+  assert.deepEqual(cardLines(emitted[0],true), ['Memory · Indexed 2 summaries · Saved 2 vectors']);
   cards.state('idle');t.mock.timers.tick(5000);assert.equal(emitted.length,1);cards.stop();
 });
 test("cycles separate concurrent scans, preserve partial saves on failure, and bound startup batches",()=>{
@@ -61,7 +61,7 @@ test("disabled auto emits without embedding, and identities from different sourc
   const cards=new ActivityCards(x=>emitted.push(x),()=>true);
   cards.saved('summary',[{identity:'a'.repeat(64),blockId:'b1'},{identity:'b'.repeat(64),blockId:'b1'}]);
   t.mock.timers.tick(750);assert.equal(emitted.length,1);assert.equal(emitted[0].vectors,0);
-  assert.equal(cardLines(emitted[0],false).filter(x=>x.startsWith('·')).length,2);cards.stop();
+  assert.deepEqual(cardLines(emitted[0],false), ['Memory · Indexed 2 summaries']);cards.stop();
 });
 test("manual-only cycles flush concurrent summaries and never promise automatic retry", (t)=>{
   t.mock.timers.enable({apis:['setTimeout']});const emitted:any[]=[];
@@ -91,6 +91,7 @@ test("actual card renderer respects Chinese narrow/wide terminal widths",()=>{
     const component=renderer({data:{summaries:1,vectors:1,model:'text-embedding-3-large',dimensions:3072,at:1,
       records:[{type:'summary',blockId:'b1',topic:'中文摘要主题'.repeat(10),summary:'内容'.repeat(100)}]}},{expanded},theme);
     const lines=component.render(width);
+    assert.equal(lines.length,1);
     assert.ok(lines.every((line:string)=>visibleWidth(line)<=width));
     component.invalidate();assert.ok(component.render(width).length>0);
   }

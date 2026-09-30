@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { displayRecord, preview, type MemoryRecord } from "./activity.js";
 
 export const MEMORY_CARD = "fuyao-memory-activity";
@@ -8,38 +8,20 @@ export interface ActivityCard {
   model?: string; dimensions?: number; state?: "backoff" | "resumed"; at: number;
   outcome?: "completed" | "retry" | "failed";
 }
-export function cardLines(card: ActivityCard, expanded: boolean): string[] {
-  const lines = [card.outcome === "completed" ? "Memory · Batch complete" : "Memory · Background activity"];
-  if (card.summaries || card.vectors) lines.push(`Summaries indexed: ${card.summaries} · Vectors saved: ${card.vectors}`);
-  if (card.vectors) lines.push(`${preview(card.model)} · ${card.dimensions} dimensions`);
-  if (card.outcome === "retry") lines.push("Saved data is retained; remaining vectors will retry in the background.");
-  if (card.outcome === "failed") lines.push("Vector backfill failed. Saved data is retained; please retry.");
-  if (card.state) lines.push(card.state === "backoff" ? "Embedding unavailable; retrying with backoff. Keyword search remains available." : "Backoff ended; background indexing is resuming or complete.");
-  // Same source/block appears once, even when both indexing and embedding committed.
-  const combined = new Map<string, typeof card.records[number]>();
-  card.records.forEach((row, i) => {
-    const key = row.identity ?? `unidentified-${i}`;
-    const previous = combined.get(key);
-    combined.set(key, { ...row, type: previous?.type === "vector" ? "vector" : row.type });
-  });
-  const allRecords = [...combined.values()];
-  const records = expanded ? allRecords : allRecords.slice(0, 3);
-  for (const row of records) {
-    lines.push(`· ${row.type === "vector" ? "Vector" : "Summary"} ${preview(row.project, 40)} / ${preview(row.topic || row.blockId, 80)}${row.truncated ? " [prefix only]" : ""}`);
-    if (expanded) lines.push(`  ${preview(row.blockId, 40)} · ${preview(row.summary, 200)}`);
-  }
-  if (!expanded && allRecords.length > records.length) lines.push(`${allRecords.length - records.length} more entries; expand to view`);
-  if (expanded) lines.push(`Batch · ${new Date(card.at).toLocaleString("en-GB")}`);
-  return lines;
+export function cardLines(card: ActivityCard, _expanded = false): string[] {
+  const parts = ["Memory"];
+  if (card.summaries) parts.push(`Indexed ${card.summaries} summaries`);
+  if (card.vectors) parts.push(`Saved ${card.vectors} vectors`);
+  if (card.outcome === "retry" || card.state === "backoff") parts.push("Embedding pending; retrying");
+  else if (card.outcome === "failed") parts.push("Embedding failed; please retry");
+  else if (card.state === "resumed" && !card.summaries && !card.vectors) parts.push("Embedding resumed");
+  return [parts.join(" · ")];
 }
 export function registerMemoryCards(pi: ExtensionAPI): void {
   pi.registerEntryRenderer<ActivityCard>(MEMORY_CARD, (entry, { expanded }, theme) => {
     if (!entry.data) return undefined;
-    const box = new Box(1, 1, text => theme.bg("customMessageBg", text));
-    const lines = cardLines(entry.data, expanded);
-    box.addChild(new Text(theme.fg("accent", theme.bold(lines[0])), 0, 0));
-    box.addChild(new Text(lines.slice(1).map(line => theme.fg("dim", line)).join("\n"), 0, 0));
-    return box;
+    const line = cardLines(entry.data, expanded)[0];
+    return { render: (width: number) => [truncateToWidth(theme.fg("dim", line), Math.max(1, width))], invalidate() {} };
   });
 }
 /** Coalesced display-only entries: no model messages, no continuation, no widgets. */

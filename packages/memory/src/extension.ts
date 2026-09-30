@@ -54,6 +54,7 @@ import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { hash, loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory, ensureVectorSchema } from "./hybrid.js";
 import { AutoEmbed } from "./auto-embed.js";
+import { CompressionScan } from "./compression-scan.js";
 import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
 import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
 import { cleanBody, showMemoryBrowser, type BrowserRow } from "./memory-browser.js";
@@ -1799,7 +1800,8 @@ export default async function factory(pi: ExtensionAPI) {
   registerMemoryCards(pi);
   const automatic = embeddingConfig.enabled && embeddingConfig.autoBackfill &&
     !(Number(process.env.PI_ACP_DELEGATE_DEPTH ?? "0") > 0);
-  const stopEmbedding = () => { auto?.stop(); auto = null; hybrid?.abort(); hybrid = null; };
+  let compressionScan: CompressionScan | null = null;
+  const stopEmbedding = () => { compressionScan?.stop(); compressionScan = null; auto?.stop(); auto = null; hybrid?.abort(); hybrid = null; };
   const getHybrid = () => {
     if (!hybrid) {
       const store = getDb();
@@ -1864,6 +1866,12 @@ export default async function factory(pi: ExtensionAPI) {
       for (const record of records) feed.add({ ...record, topic: withoutPaths(redactSecrets(record.topic ?? "").text), summary: withoutPaths(redactSecrets(record.summary ?? "").text), type: "summary" });
       cards?.saved("summary", records, count);
     };
+    compressionScan = new CompressionScan(async () => {
+      const result = await scanCurrentSession(sessionFile, true, ctx.cwd);
+      if (generation !== sessionGeneration || dbClosed) return;
+      if (result?.inserted || result?.refreshed) triggerAuto(generation);
+    }, () => generation === sessionGeneration && !dbClosed,
+    () => logLine("compress-triggered memory scan failed; later scans will retry"));
     logLine(
       cfg.debug
         ? `session_start file=${sessionFile || "(ephemeral)"} cwd=${ctx.cwd ?? ""}`
@@ -1900,6 +1908,10 @@ export default async function factory(pi: ExtensionAPI) {
     void run.finally(() => {
       if (backgroundScan === run) backgroundScan = null;
     });
+  });
+
+  pi.on("tool_execution_end", (event) => {
+    if (event.toolName === "compress" && !event.isError) compressionScan?.trigger();
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
