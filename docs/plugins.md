@@ -1,6 +1,10 @@
-# 插件清单
+# 插件归属与版本清单
 
-以当前个人环境为起点。可执行的版本清单在 [`config/plugins.json`](../config/plugins.json)，不是复制来的第三方源码目录；UI 定制、Advisor 的 BCP 适配与 Memory 增强是源码例外。
+[文档导航](README.md) · [系统架构](architecture.md) · [维护指南](maintenance.md)
+
+这些能力共同组成 fuyao-pi，不存在以 SSH 为主体、其余插件为附件的层级关系。按维护责任区分为：自研源码、本地维护的派生源码、固定版本的上游引用。上游 Pi core 0.87.1 是底座，不计作本仓库自研插件。
+
+配套插件的可执行版本清单是 [`config/plugins.json`](../config/plugins.json)；本地扩展入口由根 [`package.json`](../package.json) 声明。UI、Advisor 和 Memory 的派生源码是为了实际定制/适配而维护，不是复制上游插件合集。
 
 ## 自研
 
@@ -20,7 +24,7 @@
 
 ## BCP 增强记忆派生源码
 
-[`packages/memory`](../packages/memory/UPSTREAM.md) 从 `pi-billion-memory@0.5.3` / `52e5a01` 导入，保留 MIT 来源。自有增强为远端 Embedding、SQLite float32 向量、余弦 + RRF 混合检索和显式补建；保留原数据库与关键词回退。根 manifest 加载，setup 替换原外部 Git 包。公开默认不联网，启用后查询会发往配置的服务商；摘要经 `/memory` 菜单确认后分批上传，或由本地明确开启的 `autoBackfill` 自动增量上传；来源、块及修订校验统一适用于搜索、展开和上传。
+[`packages/memory`](../packages/memory/UPSTREAM.md) 从 `pi-billion-memory@0.5.3` / `52e5a01` 导入，保留 MIT 来源。本地增强包括压缩后增量同步、修订一致性、保守工作区归属、统一来源策略，以及可选 Embedding、SQLite float32 向量和余弦 + RRF 混合检索；保留原数据库路径与关键词回退。根 manifest 加载，setup 替换原外部 Git 包。公开默认不联网，启用后查询会发往配置的服务商；摘要经 `/memory` 菜单确认后分批上传，或由本地明确开启的 `autoBackfill` 自动增量上传；来源、块及修订校验统一适用于搜索、展开和上传。
 
 ## 第三方引用
 
@@ -37,11 +41,4 @@ Git 源固定完整提交，npm 源固定已安装版本。版本固定不是安
 
 ## 添加与升级
 
-- 自研插件：新增 `packages/<name>/`，写源码与测试，在根 Pi manifest 声明构建后的入口；需要构建时加入根构建命令。
-- UI 定制：修改 `packages/ui`，保留许可证和 `UPSTREAM.md`，运行静态检查并做终端交互验证；上游升级需人工审阅合并，不能靠 `pi update` 覆盖。
-- Advisor 适配：修改 `packages/advisor`，保留来源与许可证，运行含真实 BCP 压缩的回归测试；不自动覆盖上游源码。
-- Memory 增强：修改 `packages/memory`，保留来源与数据库兼容；用 Node 运行上游和混合检索测试，不用 Bun 的 `node:sqlite` 替代。
-- 其他第三方插件：只更改 `config/plugins.json`，记录上游来源、版本和必要配置说明。
-- skills / prompts / themes：自己的内容放到对应资源目录；第三方内容继续通过包引用加载。
-- 修改后运行 `bun run check`，预览 `bun run setup` 再应用，使用 `pi update --extensions` 校准安装。
-- 升级 Pi / BCP 必须同步适配版本约束并重建 worker、运行 smoke；不要只更新依赖清单。
+流程集中在[维护指南](maintenance.md)，避免每个页面复制一套步骤。核心原则：可直接使用的第三方功能优先引用；必要派生源码保留归属；本地扩展加入根 manifest；升级 Pi/BCP 要同时验证上下文、记忆和远端桥接边界。根包与上游/独立子包不要重复加载。

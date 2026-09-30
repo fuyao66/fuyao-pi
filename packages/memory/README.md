@@ -1,5 +1,8 @@
 # BCP 增强记忆插件
 
+这是 [fuyao-pi 个人 Agent 环境](../../README.zh-CN.md) 的一项能力，不是独立发行的 Agent。
+本文是当前本地派生版本的使用契约；来源见 [UPSTREAM.md](UPSTREAM.md)，整体边界见[架构](../../docs/architecture.md)。
+
 基于 [`pi-billion-memory@0.5.3`](UPSTREAM.md) 的个人派生插件：从允许的 ACP
 压缩摘要中检索历史记忆，保留 FTS5 trigram / LIKE，增加可选的 Embedding 混合检索。
 不改变 BCP 的压缩机制，不自动恢复或重放完整对话。
@@ -61,7 +64,7 @@
 
 ## 自动活动卡片与统一入口
 
-正常使用只需 `/memory`，在交互菜单中选择“浏览已存记忆”“本次活动”、刷新扫描、
+正常使用只需 `/memory`，在交互菜单中选择“Browse memories”“Session activity”、刷新扫描、
 补齐向量、查看来源或清理旧记忆。菜单顶部显示摘要数、向量覆盖率及自动状态。
 
 “浏览已存记忆”显示最近 50 条标题列表，不再把十条正文拼成通知。↑↓ 选择，底部显示
@@ -102,7 +105,7 @@ RPC/无终端面板时 `/memory` 返回简短状态；不会创建 TUI 组件。
 `autoBackfill:true` 是对自动摘要上传的明确授权：启动扫描完成后，后台每批补建最多 20 条，
 批间至少等待 1 秒，不阻塞聊天。之后 `compress` 完成扫描、`agent_settled` 兜底扫描、搜索前扫描和 rescan
 会通知同一后台任务，已有有效向量跳过。失败指数退避 30 秒至 5 分钟，触发事件不绕过退避；
-无进展批次暂停直到下一次触发；期间到达的新摘要信号会再尝试一轮，避免丢失补建机会。`embed status` 显示任务状态。
+无进展批次暂停直到下一次触发；期间到达的新摘要信号会再尝试一轮，避免丢失补建机会。`/memory` 菜单的向量状态项显示任务状态。
 BCP 子代理（`PI_ACP_DELEGATE_DEPTH>0`）不启动自动任务。自动上传每个网络批次前会
 重读来源允许列表并列出当前允许的文件，禁用/删除来源、被排除目录和已消失文件不自动上传。
 空白输入前缀跳过，不阻塞后面的摘要；因此这类条目可一直显示为 pending，但不会忙重试。
@@ -152,5 +155,5 @@ misreport an unfiltered total. Global `/memory` coverage includes retained exclu
 不要同时安装原插件。Node >=22.19（`node:sqlite`）为必需；Bun 用于仓库构建，
 记忆测试使用 Node：`bun run test:memory`。`bun run check` 会包含全部记忆测试。
 
-保留上游 MIT 许可证与来源；自有增强集中在 Embedding、向量存储和融合排序模块，
-便于人工合并上游修复。审核、UI、SSH 插件各自位于独立的 `packages/` 子目录。
+保留上游 MIT 许可证与来源；本地增强包含同步/权限、项目范围、后台调度、混合检索及展示模块。
+升级上游时需对照这些边界人工合并并运行回归。审核、UI、SSH 插件各自位于独立的 `packages/` 子目录。

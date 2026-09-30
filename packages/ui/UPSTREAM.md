@@ -7,7 +7,7 @@
 - 导入提交：`16c065c48d2450cd4934b2068784be4b788bbca2`
 - 许可证：MIT，保留 `LICENSE`、`NOTICE` 和 `licenses/pi-zentui-MIT.txt`。
 - 导入方式：从当前已安装 checkout 复制 Git 跟踪文件；当时没有受跟踪源码改动。不复制 `.git`、`node_modules`、安装生成的 `package-lock.json` 或运行配置。
-- 当前修改：标为 private workspace，指向本仓库，补充直接使用的 pi-ai peer 声明，清理一个文件末尾空行；UI 视觉/交互逻辑保持导入版本。后续定制改动由本仓库 Git diff 记录。
+- 导入时调整：标为 private workspace，指向本仓库，补充直接使用的 pi-ai peer 声明，清理一个文件末尾空行；导入当时保留原视觉/交互逻辑。这不是对当前版本仍与上游相同的承诺，后续定制以本仓库源码、提交记录和测试为准。
 
 保留包名与主题名以维持现有配置兼容性，不向 npm 发布同名包。`README.md` 是上游使用说明，其中上游安装命令不是 fuyao-pi 的安装方式。
 

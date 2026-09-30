@@ -1,32 +1,42 @@
 # fuyao-pi
 
-扶摇个人的 **Pi agent 体系仓库**：管理自研插件、第三方插件依赖和可复用配置。不是 Pi 本体的 fork，也不再仅仅是 SSH 插件仓库。
+**扶摇个人的 Pi Agent 环境与扩展集成仓库。** 以原版 Pi 为运行底座，将本地维护的扩展、固定版本的第三方插件和可公开的个人配置，组合成一套可持续维护的工作环境。
 
-在原 `pi-ssh-remote` 仓库上演进，保留 Git 历史。**remote-ssh 是这套体系中的一个自研插件**，保留独立包身份与运行协议。第三方插件通常只记录来源和版本；**UI、Advisor 和 Memory 是明确的源码例外**：分别用于 UI 定制、BCP 上下文适配和混合记忆检索，均保留许可证和上游归属。
+这**不是 Pi core 的 fork，不是独立 Agent CLI，也不是一个仅用于 SSH 的插件仓库**。远程执行只是其中一项能力，与自定义终端界面、BCP 兼容的审核助手、跨会话项目记忆并列。
 
-[English](README.md) · [插件清单](docs/plugins.md) · [配置与迁移](docs/configuration.md)
+[English](README.md) · [文档导航](docs/README.md) · [系统架构](docs/architecture.md) · [维护指南](docs/maintenance.md)
 
-## 结构
+## 这套环境包含什么
+
+| 能力 | 实现位置 | 职责 |
+| --- | --- | --- |
+| Agent 运行底座 | 上游 Pi core | 模型接入、会话、工具与扩展生命周期 |
+| 上下文管理 | 固定版本 billion-context-pi（BCP） | 压缩、恢复和委托任务 |
+| 终端体验 | [`packages/ui`](packages/ui/UPSTREAM.md) | 本地维护的 Sakura 派生界面与主题 |
+| 第二意见 | [`packages/advisor`](packages/advisor/UPSTREAM.md) | 根据 BCP 处理后的上下文进行无工具审核 |
+| 项目记忆 | [`packages/memory`](packages/memory/README.md) | 跨会话摘要检索、工作区范围及可选向量索引 |
+| 远程工作区 | [`packages/remote-ssh`](packages/remote-ssh/README.zh-CN.md) | 核心工作区工具通过 SSH 执行，编排留在本地 |
+| 配套工具 | [`config/plugins.json`](config/plugins.json) | 固定版本的提问、任务、联网、目标和续跑插件 |
 
 ```text
-packages/remote-ssh/    自研 SSH 插件：源码、测试、构建脚本
-packages/ui/            可定制的 Sakura Cyberdeck 派生源码及许可证
-packages/advisor/       RPIV Advisor 派生源码：使用 BCP 处理后的上下文
-packages/memory/        BCP 增强记忆：关键词 + 可选 Embedding 混合检索
-config/plugins.json    第三方插件来源，固定版本 / Git 提交
-config/settings.json   可公开的个人配置，不含模型与凭证
-scripts/setup.ts       预览 / 应用个人配置
-test/                  配置管理测试
-skills/                后续自研技能
-prompts/               后续个人提示词模板
-themes/                后续新增主题；当前主题在 packages/ui
+上游 Pi + 固定版本 BCP
+          │
+          ├── fuyao-pi 根 manifest
+          │     ├── UI
+          │     ├── Advisor
+          │     ├── Memory
+          │     └── Remote SSH ──→ 无模型的远端 worker
+          │
+          └── 固定版本的配套插件
+
+仅本地保存：凭证、模型配置、会话、记忆数据库、SSH 私钥
 ```
 
-后续自己 vibe 的插件放在 `packages/<名称>/`，入口加入根 `package.json` 的 `pi` 清单。当前 skills/prompts/themes 仅预留目录，不虚构你已有的个人工作流。
+仓库管理源码和集成配置，不是私人运行数据的备份。固定依赖能减少环境漂移，但不代表外部服务、平台行为和所有插件私有配置都能完全复现。
 
-## 安装
+## 快速开始
 
-固定基线：**Pi 0.87.1 + billion-context-pi 0.1.82**。需要 Bun、Node.js 22.19+ 和 OpenSSH；若 Pi 声明更高的 engine 要求，以其为准。远端 worker 支持 Linux x64/arm64。
+基线：**Pi 0.87.1 + BCP 0.1.82**。需要 Node.js **22.19+**、Bun 和 Git；SSH 工作流另需 OpenSSH。远端 worker 面向 Linux x64/arm64。向已有 Pi 环境应用前，请先看[配置说明](docs/configuration.md)。
 
 ```sh
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
@@ -34,64 +44,63 @@ git clone https://github.com/fuyao66/fuyao-pi.git
 cd fuyao-pi
 bun install --frozen-lockfile
 bun run check
-bun run build:pi-worker:all
-bun run smoke:pi
 
-# 仅预览，不写入、不下载插件
+# 先预览，再备份并合并公开配置
 bun run setup
-# 合并配置；已有 settings.json 会先备份
 bun run setup --apply
-# 由 Pi 安装 / 校准上游依赖，加载前请审查第三方包
+# 下载、加载前先审查配套插件
 pi update --extensions
 ACP_AUTO_UPDATE=0 pi
 ```
 
-安装脚本保留已有偏好、模型选择、资源路径、额外插件和第三方资源过滤规则（被替换的外部 UI / Advisor / Memory 包声明除外）；受管理插件按本仓库版本固定。不会读取或复制 `auth.json`、`models.json`、联网凭证、会话和 SSH 私钥，也不会自动下载依赖。
-
-可用 `--agent-dir /路径` 指定另一套配置，启动时相应设置 `PI_CODING_AGENT_DIR=/路径`。**支持的安装方式是 clone 后构建**；直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会构建 worker，也不会配置第三方插件。根 Pi manifest 暴露自研资源和仓库内 UI / Advisor / Memory，完整组合由 setup 管理。
-
-## 远程工作区
-
-```text
-/remote-connect user@host /远端项目绝对路径
-/remote-status
-/remote-exit
-```
-
-核心文件 / shell 工具在远端执行；模型、凭证、会话、UI 和 BCP 编排留在本地。**收录第三方依赖不代表它们全部适配了 SSH 工作区**。详见 [remote-ssh 文档](packages/remote-ssh/README.zh-CN.md)。
-
-## 开发与验证
+`check` 会构建本地 remote-ssh 扩展入口，**不会编译远端 worker**。首次使用 SSH 前再执行：
 
 ```sh
-bun run check                 # 核心/配置类型检查 + 构建 + UI 静态检查 + 测试
-bun run build:pi-worker:all    # Linux 双架构 worker 及伴随资源
-bun run smoke:pi              # SSH 进程替身 + 真实 worker / Pi SDK
+bun run build:pi-worker:all
+bun run smoke:pi
 ```
 
-Smoke 不等同于真实 SSH 服务器或模型 API 测试；ARM64 需另行运行验证。升级 Pi / BCP 后必须重建并复验桥接。固定配置请使用 `ACP_AUTO_UPDATE=0` 禁止 BCP 自更新。
+模型访问权限在本地 Pi 中单独配置；仓库不提供 Advisor 审核模型选择或 Memory Embedding 服务凭证。使用自定义 agent 目录时，setup、update 和启动需使用相同的 `PI_CODING_AGENT_DIR`；个别插件状态仍使用固定的 home 路径。
 
-## 自定义 UI
+**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。根包只加载一次，不要同时逐个加载子包。本仓库不提供另一个 `fuyao-pi` 启动命令。
 
-直接修改 [`packages/ui/`](packages/ui/UPSTREAM.md)。根包加载其中五个扩展入口和主题；setup 会替换旧的外部 UI 包声明，避免重复加载原型补丁。以后由本仓库维护源码，不自动跟随上游覆盖。本次迁移尚未改变 UI 视觉/交互逻辑；静态检查不能替代终端交互验证。
+## 日常入口
 
-## Advisor 与 BCP
+- **`/memory`**：浏览摘要、查看来源和向量状态、执行维护。不保留旧子命令。模型检索默认当前工作区；跨项目或旧历史/未知归属需显式 `scope: "all"`。
+- **`/advisor`**：选择审核模型；咨询单独计费，必须单独调用并使用新鲜的压缩后上下文快照。
+- **`/remote-connect`**、**`/remote-status`**、**`/remote-exit`**：进入、检查和退出 SSH 工作区。
+- 压缩、委托及配套插件命令由各自上游负责，见[插件清单](docs/plugins.md)。
 
-[`packages/advisor/`](packages/advisor/UPSTREAM.md) 保留 `/advisor` 模型选择器和无参数咨询工具，但不再从日志重建原始历史；读取 BCP 处理后的请求快照。必须单独调用 Advisor，不能和 `compress` 或其他工具同批；压缩后等待下一轮上下文刷新再咨询。没有新鲜快照就报错，绝不回退到原始日志。
+Memory 不改 BCP 的压缩算法。本地授权自动 Embedding 后，压缩完成即可后台收录，并用一行提示汇报批次结果。发送给 Embedding 服务的是脱敏后的摘要前缀和查询，**不是原始会话**；脱敏不能保证移除一切敏感内容。向量服务失败时仍能关键词检索。启用网络前请阅读 [Memory 契约与限制](packages/memory/README.md)。
 
-重启后用 `/advisor` 选择模型；仓库不预设审核模型，不上传本地选择或凭证。Advisor 无工具，不读取本地或远端文件；咨询单独计费。快照不包含后续 provider 专用请求变换，不保证自动适配更小的审核模型窗口。完整边界见来源文档。
+## 项目结构
 
-## BCP 增强记忆
+```text
+package.json / bun.lock  整体组合入口、运行基线与依赖锁
+packages/
+  ui/                    本地维护的终端 UI 派生扩展
+  advisor/               本地维护的 BCP 兼容审核扩展
+  memory/                本地维护的 BCP 记忆增强扩展
+  remote-ssh/            自研远程执行扩展与 worker
+config/                  公开默认配置、固定版本配套插件来源
+scripts/                 环境安装与集成脚本
+test/                    跨包/配置回归测试
+docs/                    架构、安装、维护及设计记录
+skills/ prompts/ themes/ 个人资源预留目录，目前仅占位
+```
 
-[`packages/memory/`](packages/memory/README.md) 基于 pi-billion-memory，保留原数据库、允许列表与 FTS5/LIKE 检索，增加显式启用的远端 Embedding、SQLite 向量和 RRF 融合。不改 BCP 压缩算法、不上传原始对话；启用且存在向量时会向服务商发送脱敏查询。
+插件的源码、测试和来源说明放在插件内部；根配置和测试负责**把它们组合起来**。当前主题位于 `packages/ui/themes`，不是根 `themes` 目录。无需为了突出整体项目而再加空目录或修改包身份。
 
-本地 `autoBackfill:true` 后启动自动分批补齐摘要向量，后续新摘要也后台增量补建，失败退避不阻塞聊天。自动入库和向量保存会在聊天区显示合并的一行提示，不进入模型上下文。只保留 `/memory` 菜单入口，旧子命令不再执行；上传和删除均需确认。工具检索默认当前工作区，旧历史/未知归属需显式 `scope: "all"`；搜索、展开、上传统一校验来源及摘要修订。服务失败自动回退关键词。公开默认关闭，服务地址/密钥留在本地 `~/.pi/fuyao-memory-embedding.json` 与密钥文件。脱敏不是完全去敏保证，详情见插件文档。
+## 边界与维护原则
 
-记忆测试必须使用 Node `node:sqlite`：`bun run test:memory`；已纳入根 `bun run check`，不要对该目录直接使用 `bun test`。
+- Pi core 跟随上游；派生扩展保留许可证和归属，升级须人工审查，不盲目覆盖本地修改。
+- 模型、会话、UI、Advisor、Memory 和 BCP 编排留在本地；只有受支持的工作区操作远程执行。其他插件**不会自动获得 SSH 兼容性**。
+- 公开默认关闭 Pi 原生自动压缩，以配合 BCP；重试上限为 20 次。已有设置优先，请根据费用与延迟调整。验证固定 BCP 基线时保持 `ACP_AUTO_UPDATE=0`。
+- 凭证、私有服务地址、主机信息、会话及数据库不入库。setup 只合并声明和默认值，不安装模型、不复制插件私密状态。
+- `bun run check` 包含 Memory 的 Node SQLite 测试。SSH smoke 使用进程替身，不是真实 SSH 服务；真实终端视觉、供应商请求及 ARM64 运行需另行验证。
 
-## 隐私与配置原则
+新增扩展和升级流程见[维护指南](docs/maintenance.md)。当前契约与历史提案的区分见[文档导航](docs/README.md)。
 
-凭证、私有服务地址、服务器清单、数据库和会话不入库。机器专属配置留在本地 Pi 目录，或放入被忽略的 `local/`。公开配置不指定私有 provider/model。
+Git 历史来自 `pi-ssh-remote`，但项目职责已经扩大。子包保留协议身份用于兼容；迁移细节放在[配置说明](docs/configuration.md)，不再作为根文档主线。
 
-本配置使用 BCP，因此关闭 Pi 原生自动压缩；移除 BCP 时请重新启用。当前个人重试上限为 20 次，可能增加延迟和费用，可在本地调整；已有配置不会被 setup 强制覆盖。
-
-[MIT](LICENSE)。第三方包保留各自的许可证与所有权。
+[MIT](LICENSE)。导入组件保留各自许可证和所有权。
