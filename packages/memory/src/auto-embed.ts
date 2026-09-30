@@ -18,7 +18,8 @@ export class AutoEmbed {
   private failures = 0;
   private nextAt = 0;
   constructor(private batch: () => Promise<BackfillBatch>, private current: () => boolean,
-    private report: (message: string) => void = () => {}, private time: AutoEmbedClock = clock) {}
+    private report: (message: string) => void = () => {}, private time: AutoEmbedClock = clock, private observe: (state: ReturnType<AutoEmbed["status"]>) => void = () => {}) {}
+  private changed(): void { try { this.observe(this.status()); } catch { /* Observer only. */ } }
   status() {
     return { state: this.stopped ? "stopped" : this.running ? "running" : this.timer !== undefined
       ? this.failures ? "backoff" : "scheduled" : "idle", failures: this.failures,
@@ -27,7 +28,7 @@ export class AutoEmbed {
   trigger(): void {
     if (this.stopped || !this.current()) return;
     this.requested = true;
-    if (!this.running && this.timer === undefined) this.arm();
+    if (!this.running && this.timer === undefined) { this.arm(); this.changed(); }
   }
   stop(): void {
     this.stopped = true;
@@ -59,6 +60,7 @@ export class AutoEmbed {
     } finally {
       this.running = false;
       if (this.requested && !this.stopped && this.current()) this.arm();
+      if (!this.stopped && this.current()) this.changed();
     }
   }
 }

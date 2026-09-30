@@ -54,6 +54,8 @@ import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory } from "./hybrid.js";
 import { AutoEmbed } from "./auto-embed.js";
+import { ActivityFeed, activityLine, displayRecord, preview, type MemoryRecord } from "./activity.js";
+import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
 
 // ---------------------------------------------------------------------------
 // Constants / config / logging
@@ -684,6 +686,7 @@ export class MemoryDb {
   db: any = null;
   /** True between close() and the next open(): an in-flight ingest must fail, not touch a null handle. */
   closed = false;
+  onStored?: (records: MemoryRecord[], count: number) => void;
 
   /**
    * @param {string} dbPath
@@ -853,6 +856,7 @@ export class MemoryDb {
    * @param {((sessionFile:string)=>Promise<string|null>)|null} resolveCwd lazy cwd resolver
    */
   async ingestSourceFile(sourceFile, meta: any = {}, force = false, resolveCwd = null) {
+    const onStored = this.onStored;
     this.open();
     try {
       await fs.promises.access(sourceFile);
@@ -937,6 +941,7 @@ export class MemoryDb {
     let inserted = 0;
     let refreshed = 0;
     let redactedHits = 0;
+    const savedRecords: MemoryRecord[] = [];
     this.db.exec("BEGIN");
     try {
       this.db
@@ -1004,8 +1009,11 @@ export class MemoryDb {
           sourceFile,
           b.blockId,
         );
-        if (r.changes > 0) inserted++;
-        else if (updMsgIds.run(msgIdsJson, sourceFile, b.blockId, msgIdsJson).changes > 0) refreshed++;
+        if (r.changes > 0) {
+          inserted++;
+          if (savedRecords.length >= 80) savedRecords.shift();
+          savedRecords.push({ blockId: b.blockId, project, topic: redactedTopic.text, summary });
+        } else if (updMsgIds.run(msgIdsJson, sourceFile, b.blockId, msgIdsJson).changes > 0) refreshed++;
       }
       this.db.exec("COMMIT");
     } catch (e) {
@@ -1016,6 +1024,7 @@ export class MemoryDb {
       }
       return { ok: false, parsed: true, total: blocks.length, inserted: 0, mtimeMs, size, error: e.message };
     }
+    if (savedRecords.length) { try { onStored?.(savedRecords, inserted); } catch { /* Display never breaks storage. */ } }
     if (redactedHits > 0) {
       logLine(`redacted ${redactedHits} potential secret(s) before storing ${path.basename(sourceFile)}`);
     }
@@ -1193,9 +1202,8 @@ export class MemoryDb {
    * @param {number} keepDays retention in days; 0 = delete every timestamped block
    * @returns {{removedBlocks:number, removedSources:number, removedSessions:number, remainingBlocks:number}}
    */
-  prune(keepDays) {
+  prune(keepDays, cutoff = Date.now() - keepDays * 86400000, maxId = Number.MAX_SAFE_INTEGER) {
     this.open();
-    const cutoff = Date.now() - keepDays * 86400000;
     const now = Date.now();
     const before = this.db.prepare("SELECT count(*) AS c FROM blocks").get().c;
     // Tombstones and deletes are one unit: a crash between them would make the delete look like it
@@ -1208,10 +1216,10 @@ export class MemoryDb {
         .prepare(
           `INSERT OR IGNORE INTO block_tombstones(source_file, block_id, pruned_at)
            SELECT source_file, block_id, ? FROM blocks
-           WHERE created_at IS NOT NULL AND created_at < ?`,
+           WHERE created_at IS NOT NULL AND created_at < ? AND id <= ?`,
         )
-        .run(now, cutoff);
-      this.db.prepare("DELETE FROM blocks WHERE created_at IS NOT NULL AND created_at < ?").run(cutoff);
+        .run(now, cutoff, maxId);
+      this.db.prepare("DELETE FROM blocks WHERE created_at IS NOT NULL AND created_at < ? AND id <= ?").run(cutoff, maxId);
       const rs = this.db
         .prepare(
           "DELETE FROM sources WHERE NOT EXISTS (SELECT 1 FROM blocks b WHERE b.source_file = sources.source_file)",
@@ -1765,6 +1773,10 @@ export default async function factory(pi: ExtensionAPI) {
   const embeddingConfig = loadEmbeddingConfig();
   let hybrid: HybridMemory | null = null;
   let auto: AutoEmbed | null = null;
+  let cards: ActivityCards | null = null;
+  const sanitizeDisplay = (text: string) => withoutPaths(redactSecrets(text).text);
+  const feed = new ActivityFeed(80, sanitizeDisplay);
+  registerMemoryCards(pi);
   const automatic = embeddingConfig.enabled && embeddingConfig.autoBackfill &&
     !(Number(process.env.PI_ACP_DELEGATE_DEPTH ?? "0") > 0);
   const stopEmbedding = () => { auto?.stop(); auto = null; hybrid?.abort(); hybrid = null; };
@@ -1774,7 +1786,11 @@ export default async function factory(pi: ExtensionAPI) {
       store.open();
       const generation = sessionGeneration;
       hybrid = new HybridMemory(store, embeddingConfig, (text) => withoutPaths(redactSecrets(text).text),
-        undefined, () => generation === sessionGeneration && !dbClosed);
+        undefined, () => generation === sessionGeneration && !dbClosed, (records) => {
+          if (generation !== sessionGeneration || dbClosed) return;
+          for (const record of records) feed.add({ ...record, type: "vector", model: sanitizeDisplay(embeddingConfig.model), dimensions: embeddingConfig.dimensions });
+          cards?.saved("vector", records, records.length, embeddingConfig.model, embeddingConfig.dimensions);
+        });
     }
     return hybrid;
   };
@@ -1798,7 +1814,7 @@ export default async function factory(pi: ExtensionAPI) {
     if (!auto) {
       const worker = getHybrid(); // Capture this session's instance, never re-create from an old timer.
       auto = new AutoEmbed(() => worker.backfill(20, uploadPermissions), () => generation === sessionGeneration && !dbClosed,
-        (message) => logLine(message));
+        (message) => logLine(message), undefined, (state) => cards?.state(state.state));
     }
     auto.trigger();
   };
@@ -1806,8 +1822,20 @@ export default async function factory(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
     stopEmbedding();
+    cards?.stop(); cards = null; feed.clear();
     dbClosed = false; // a new session may reuse this extension instance after a shutdown
     const generation = ++sessionGeneration;
+    if (ctx.mode === "tui" && !(Number(process.env.PI_ACP_DELEGATE_DEPTH ?? "0") > 0)) {
+      cards = new ActivityCards((data) => pi.appendEntry(MEMORY_CARD, data),
+        () => generation === sessionGeneration && !dbClosed,
+        (text) => withoutPaths(redactSecrets(text).text));
+    }
+    const store = getDb(); store.open();
+    store.onStored = (records, count) => {
+      if (generation !== sessionGeneration || dbClosed) return;
+      for (const record of records) feed.add({ ...record, topic: withoutPaths(redactSecrets(record.topic ?? "").text), summary: withoutPaths(redactSecrets(record.summary ?? "").text), type: "summary" });
+      cards?.saved("summary", records, count);
+    };
     logLine(
       cfg.debug
         ? `session_start file=${sessionFile || "(ephemeral)"} cwd=${ctx.cwd ?? ""}`
@@ -1861,6 +1889,8 @@ export default async function factory(pi: ExtensionAPI) {
     // Remember which session this shutdown belongs to: if a new session_start lands while the grace
     // period (or the final scan) is still running, closing the store here would close and latch the
     // *new* session's store. The check below is synchronous with the latch, so no window remains.
+    cards?.stop(); cards = null;
+    if (db) db.onStored = undefined;
     stopEmbedding();
     const shutdownGeneration = ++sessionGeneration; // invalidate in-flight background scan continuations
     const inflight = backgroundScan;
@@ -1875,6 +1905,7 @@ export default async function factory(pi: ExtensionAPI) {
       ]);
       if (timer) clearTimeout(timer);
     }
+    if (shutdownGeneration !== sessionGeneration) return;
     try {
       const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
       await scanCurrentSession(sessionFile, false, ctx.cwd);
@@ -2079,10 +2110,33 @@ export default async function factory(pi: ExtensionAPI) {
 
   pi.registerCommand("memory", {
     description:
-      "BCP memory: /memory, rescan, sources, prune <days>, embed status, embed backfill [1-100] (explicit summary upload)",
+      "打开 Memory 记忆管理：摘要、自动活动、向量状态及维护操作",
     handler: async (args, ctx) => {
       try {
-        const want = String(args || "").trim();
+        const generation = sessionGeneration;
+        const current = () => generation === sessionGeneration && !dbClosed;
+        let want = String(args || "").trim();
+        if (!want) {
+          const st = getDb().stats();
+          const vs = embeddingConfig.enabled ? getHybrid().status() : null;
+          const status = `${st.blocks} 条摘要 · 向量 ${vs ? `${vs.indexed}/${vs.total}` : "关闭"} · 自动 ${automatic ? auto?.status().state ?? "idle" : "off"}`;
+          const action = await memoryMenu(ctx, status, current);
+          if (!action) return;
+          want = action;
+          if (want === "prune") {
+            const days = await ctx.ui.input("保留最近多少天的记忆？", "例如 30；0 会删除所有带时间戳的摘要");
+            if (!current() || days === undefined) return;
+            if (!/^\d+$/.test(days.trim())) { ctx.ui.notify("请输入 0–36500 的整数天数", "warning"); return; }
+            want = `prune ${days.trim()}`;
+          }
+        }
+        if (want === "browse") {
+          const recent = getDb().db.prepare(`SELECT b.block_id AS blockId,b.topic,b.summary,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file ORDER BY b.id DESC LIMIT 10`).all();
+          const activity = feed.recent(10).map(activityLine);
+          const lines = ["本次运行活动", ...(activity.length ? activity : ["暂无新入库活动"]), "", "最近索引的摘要（最多 10 条）",
+            ...recent.flatMap((r) => { const d = displayRecord(r, sanitizeDisplay); return [`${d.project} / ${d.topic || d.blockId}`, d.summary ?? ""]; })];
+          ctx.ui?.notify?.(lines.join("\n"), "info"); return;
+        }
         if (want.startsWith("embed")) {
           if (want === "embed status") {
             const status = getHybrid().status();
@@ -2133,11 +2187,18 @@ export default async function factory(pi: ExtensionAPI) {
             ctx.ui?.notify?.("Usage: /memory prune <days> (0-36500; 0 = delete all timestamped blocks)", "info");
             return;
           }
-          const p = getDb().prune(keepDays);
+          const cutoff = Date.now() - keepDays * 86400000;
+          const maxId = getDb().db.prepare("SELECT coalesce(max(id),0) AS n FROM blocks").get().n;
+          const count = getDb().db.prepare("SELECT count(*) AS n FROM blocks WHERE created_at IS NOT NULL AND created_at < ? AND id <= ?").get(cutoff, maxId).n;
+          if (!ctx.hasUI) { ctx.ui?.notify?.("删除记忆需要交互确认；未执行。", "warning"); return; }
+          if (!await ctx.ui.confirm("确认删除旧记忆？", `预计删除 ${count} 条摘要及其向量，保留最近 ${keepDays} 天；删除会记录持久标记，重新扫描不会恢复。`)) return;
+          if (!current()) return;
+          const p = getDb().prune(keepDays, cutoff, maxId);
           const msg = `Prune done: removed ${p.removedBlocks} block(s) / ${p.removedSources} empty source(s), ${p.remainingBlocks} remain (kept ${keepDays} day(s))`;
           ctx.ui?.notify?.(msg, "info");
           return;
         }
+        if (want && want !== "status") { ctx.ui?.notify?.("输入 /memory 打开统一记忆管理入口。", "info"); return; }
         const st = getDb().stats();
         const msg =
           `Memory store: ${st.sources} sources / ${st.sources_with_blocks} with compressed blocks / ` +

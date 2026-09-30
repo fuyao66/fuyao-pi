@@ -8,7 +8,10 @@
 
 The upstream source modules and self-tests are retained. This derivative adds
 `src/embeddings.ts`, `src/hybrid.ts`, `src/auto-embed.ts`, manual/opt-in automatic embedding and integration
-at `memory_search`. Upstream ingestion, allow-list, lexical lookup, expansion,
+at `memory_search`. `src/activity.ts` and `src/memory-ui.ts` add coalesced,
+post-commit chat activity cards (`custom` entries excluded from model context)
+and a single `/memory` management menu; no editor/footer patches. Legacy commands
+remain compatible, with confirmation required for every prune path. Upstream ingestion, allow-list, lexical lookup, expansion,
 watermarks and durable pruning remain. Source loading replaces upstream's bundled
 Git-distribution workflow. See [README.md](README.md) for the fork contract.
 

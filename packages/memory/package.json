@@ -10,6 +10,6 @@
   "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx tests/self-test.test.ts && FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx --test tests/hybrid.test.ts tests/auto-embed.test.ts tests/auto-lifecycle.test.ts"
+    "test": "FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx tests/self-test.test.ts && FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx --test tests/hybrid.test.ts tests/auto-embed.test.ts tests/auto-lifecycle.test.ts tests/activity.test.ts"
   }
 }
