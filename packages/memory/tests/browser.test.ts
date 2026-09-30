@@ -39,6 +39,23 @@ test("loader errors stay in overlay; refreshed detail updates status; small heig
   const tiny=new MemoryBrowser([row],()=>({...row,summary}),theme,()=>4,()=>{},()=>{},()=>true);
   tiny.handleInput('\r'); assert.match(tiny.render(40).join('\n'),/终端太矮/);
 });
+test("list, detail and empty states have aligned theme borders within width/height budgets", () => {
+  const colored = { fg: (_: string, s: string) => `\x1b[36m${s}\x1b[0m`, bold: (s: string) => s } as any;
+  for (const width of [28, 60]) {
+    for (const records of [[], [row]]) {
+      const view = new MemoryBrowser(records, () => ({ ...row, summary }), colored, () => 18, () => {}, () => {}, () => true);
+      for (const detail of [false, true]) {
+        if (detail && records.length) { view.handleInput('\r'); view.render(width); view.handleInput('\x1b[F'); }
+        const lines = view.render(width);
+        assert.ok(lines.length <= 18);
+        assert.match(lines[0], /╭─+╮/); assert.match(lines.at(-1)!, /╰─+╯/);
+        for (const line of lines) assert.equal(visibleWidth(line), width);
+        for (const line of lines.slice(1, -1)) assert.equal((line.match(/│/g) ?? []).length, 2);
+        if (detail && records.length) assert.match(lines.join('\n'), /完整尾部_END/);
+      }
+    }
+  }
+});
 test("body removes terminal escapes without flattening paragraphs; non-TUI never opens custom", async () => {
   assert.equal(cleanBody("a\n\n\x1b[31mb\x1b[0m\x1b]52;c;bad\x07\n尾"),"a\n\nb\n尾");
   let notified="";

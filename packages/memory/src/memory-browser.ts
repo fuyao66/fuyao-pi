@@ -1,5 +1,5 @@
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, ScrollView, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, ScrollView, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { preview } from "./activity.js";
 
 export interface BrowserRow {
@@ -54,7 +54,18 @@ export class MemoryBrowser {
     this.list.onCancel = this.done;
   }
   render(width: number): string[] {
-    const h = Math.max(1, Math.floor(this.height()));
+    width = Math.max(1, Math.floor(width));
+    const height = Math.max(1, Math.floor(this.height()));
+    if (width < 8 || height < 3) return [truncateToWidth("窗口太小 · Esc", width)];
+    const innerWidth = width - 4;
+    const border = (text: string) => this.theme.fg("border", text);
+    const lines = this.renderContent(innerWidth, height - 2);
+    return [border(`╭${"─".repeat(width - 2)}╮`), ...lines.map(line => {
+      const clipped = truncateToWidth(line, innerWidth);
+      return border("│") + " " + clipped + " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped))) + " " + border("│");
+    }), border(`╰${"─".repeat(width - 2)}╯`)];
+  }
+  private renderContent(width: number, h: number): string[] {
     const clip = (line: string) => truncateToWidth(line, Math.max(1, width));
     const header = this.theme.fg("accent", this.theme.bold(`Memory / ${this.title}`));
     if (h < 7) return ["终端太矮，请增高窗口", "Esc 返回 / 关闭"].slice(0, h).map(clip);
