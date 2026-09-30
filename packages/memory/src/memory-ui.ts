@@ -98,8 +98,8 @@ export class ActivityCards {
 /** One discoverable entry point; dialogs stay out of model context. */
 export async function memoryMenu(ctx: ExtensionContext, status: string, current: () => boolean): Promise<string | undefined> {
   if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui?.notify?.(status, "info"); return undefined; }
-  const labels = ["Browse memories", "Session activity", "Rescan sources", "Backfill vectors", "View sources", "Prune old memories"];
+  const labels = ["Browse memories", "Session activity", "Vector status", "Rescan sources", "Backfill vectors", "View sources", "Prune old memories"];
   const selected = await ctx.ui.select(`Memory · Manage\n${status}`, labels);
   if (!current()) return undefined;
-  return ["browse", "activity", "rescan", "embed backfill", "sources", "prune"][labels.indexOf(selected ?? "")];
+  return ["browse", "activity", "embed status", "rescan", "embed backfill", "sources", "prune"][labels.indexOf(selected ?? "")];
 }

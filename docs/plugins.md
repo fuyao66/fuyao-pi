@@ -20,7 +20,7 @@
 
 ## BCP 增强记忆派生源码
 
-[`packages/memory`](../packages/memory/UPSTREAM.md) 从 `pi-billion-memory@0.5.3` / `52e5a01` 导入，保留 MIT 来源。自有增强为远端 Embedding、SQLite float32 向量、余弦 + RRF 混合检索和显式补建；保留原数据库与关键词回退。根 manifest 加载，setup 替换原外部 Git 包。公开默认不联网，启用后查询会发往配置的服务商；历史摘要只经 `/memory embed backfill` 确认后分批上传。
+[`packages/memory`](../packages/memory/UPSTREAM.md) 从 `pi-billion-memory@0.5.3` / `52e5a01` 导入，保留 MIT 来源。自有增强为远端 Embedding、SQLite float32 向量、余弦 + RRF 混合检索和显式补建；保留原数据库与关键词回退。根 manifest 加载，setup 替换原外部 Git 包。公开默认不联网，启用后查询会发往配置的服务商；摘要经 `/memory` 菜单确认后分批上传，或由本地明确开启的 `autoBackfill` 自动增量上传；来源、块及修订校验统一适用于搜索、展开和上传。
 
 ## 第三方引用
 

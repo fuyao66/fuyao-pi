@@ -84,7 +84,7 @@ Smoke 不等同于真实 SSH 服务器或模型 API 测试；ARM64 需另行运�
 
 [`packages/memory/`](packages/memory/README.md) 基于 pi-billion-memory，保留原数据库、允许列表与 FTS5/LIKE 检索，增加显式启用的远端 Embedding、SQLite 向量和 RRF 融合。不改 BCP 压缩算法、不上传原始对话；启用且存在向量时会向服务商发送脱敏查询。
 
-本地 `autoBackfill:true` 后启动自动分批补齐摘要向量，后续新摘要也后台增量补建，失败退避不阻塞聊天。自动入库和向量保存会在聊天区显示可展开的 Memory 活动卡片，不进入模型上下文。日常只需 `/memory` 统一菜单查看摘要/状态并维护记忆；旧子命令仍兼容，删除均需确认。服务失败自动回退关键词。公开默认关闭，服务地址/密钥留在本地 `~/.pi/fuyao-memory-embedding.json` 与密钥文件。脱敏不是完全去敏保证，详情见插件文档。
+本地 `autoBackfill:true` 后启动自动分批补齐摘要向量，后续新摘要也后台增量补建，失败退避不阻塞聊天。自动入库和向量保存会在聊天区显示合并的一行提示，不进入模型上下文。只保留 `/memory` 菜单入口，旧子命令不再执行；上传和删除均需确认。工具检索默认当前工作区，旧历史/未知归属需显式 `scope: "all"`；搜索、展开、上传统一校验来源及摘要修订。服务失败自动回退关键词。公开默认关闭，服务地址/密钥留在本地 `~/.pi/fuyao-memory-embedding.json` 与密钥文件。脱敏不是完全去敏保证，详情见插件文档。
 
 记忆测试必须使用 Node `node:sqlite`：`bun run test:memory`；已纳入根 `bun run check`，不要对该目录直接使用 `bun test`。
 

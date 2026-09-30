@@ -294,6 +294,15 @@ export async function installPiRemoteExtension(
   let state = getPiRemoteStateForSession(sessionKey);
   let binding = workspaceBinding(sessionKey);
   publishSessionContext(pi, () => sessionKey);
+  // Read-only, session-scoped identity for local companion plugins. No keys or
+  // mutable state escape this event response; unavailable remote never means local.
+  pi.events.on("fuyao:workspace-identity", (message: unknown) => {
+    if (!message || typeof message !== 'object' || !('accept' in message) || typeof message.accept !== 'function') return;
+    const status = buildPiWorkspaceStatus(state);
+    message.accept({ mode: status.mode, generation: binding.generation,
+      ...(status.mode === 'remote' ? { target: state.connectOptions?.target,
+        port: state.connectOptions?.port ?? 22, root: state.cwd } : {}) });
+  });
   const inheritance = options.inheritance;
   if (
     options.inheritedChild ||

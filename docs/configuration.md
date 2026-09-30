@@ -11,7 +11,7 @@ root manifest 不会自动安装清单里的第三方 Pi 插件，必须执行 s
 
 ## Memory 本地配置
 
-原 `~/.pi/pi-billion-memory.json`、允许列表与数据库保持兼容。新的 `~/.pi/fuyao-memory-embedding.json` 只在本地配置，公开默认关闭。服务地址与密钥文件不入库，setup 不读取或迁移这些私密配置。开启后有向量的搜索发送脱敏查询，历史摘要需要 `/memory embed backfill` 明确确认；详见 [Memory 配置](../packages/memory/README.md)。
+原 `~/.pi/pi-billion-memory.json`、允许列表与数据库保持兼容。新的 `~/.pi/fuyao-memory-embedding.json` 只在本地配置，公开默认关闭。服务地址与密钥文件不入库，setup 不读取或迁移这些私密配置。开启后有向量的搜索发送脱敏查询，历史摘要由 `/memory` 菜单确认上传，或由本地明确开启的 `autoBackfill` 自动补建；详见 [Memory 配置](../packages/memory/README.md)。
 
 ## setup 行为
 

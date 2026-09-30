@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createEventBus, createReadTool } from "@earendil-works/pi-coding-agent";
-import { buildPiWorkspaceStatus, installPiRemoteExtension } from "../src/pi/host-extension.ts";
+import { buildPiWorkspaceStatus, getPiRemoteStateForSession, installPiRemoteExtension } from "../src/pi/host-extension.ts";
 import { resolvePiRuntimeAssembly, PI_REMOTE_RUNTIME_VERSION } from "../src/pi/assembly.ts";
 
 describe("Pi + BCP workspace status", () => {
@@ -22,6 +22,21 @@ describe("Pi + BCP workspace status", () => {
     expect(status.routing.executionRuntime).toContain("BCP control plane remains local");
     expect(buildPiWorkspaceStatus({ ...state, ownershipVerified: false }).mode).toBe("unavailable");
     expect(buildPiWorkspaceStatus({ ...state, scope: { isClosed: true } as never }).remoteWorkspaceTools).toEqual([]);
+  });
+  test("publishes read-only identity and never falls back to local on remote failure", async () => {
+    const events = createEventBus();
+    await installPiRemoteExtension({ events, registerTool() {}, registerCommand() {}, on() {} } as never);
+    const state = getPiRemoteStateForSession(events);
+    const read = () => { let result: any; events.emit('fuyao:workspace-identity', { accept(value: unknown) { result = value; } }); return result; };
+    expect(read().mode).toBe('local');
+    state.selected = true;
+    expect(read().mode).toBe('unavailable');
+    state.assembly = await resolvePiRuntimeAssembly({ tools: [{ ...createReadTool('/tmp'), sourceInfo: { source: 'builtin', path: '<builtin:read>', scope: 'temporary', origin: 'top-level' } }] });
+    state.scope = { isClosed: false } as never; state.ownershipVerified = true; state.cwd = '/remote/project';
+    state.connectOptions = { target: 'test-host', port: 2222, identity: '/private/key' } as never;
+    expect(read()).toMatchObject({ mode: 'remote', target: 'test-host', port: 2222, root: '/remote/project' });
+    expect(JSON.stringify(read())).not.toContain('private');
+    state.connectionError = 'offline'; expect(read().mode).toBe('unavailable');
   });
   test("registers only controls before a connection", async () => {
     const tools: string[] = [], commands: string[] = [], handlers: string[] = [];

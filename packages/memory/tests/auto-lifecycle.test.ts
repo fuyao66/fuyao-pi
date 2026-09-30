@@ -16,7 +16,7 @@ test("real extension scans trigger background startup/incremental embedding; del
       import {join} from 'node:path';
       const {default:factory,loadSqlite,MemoryDb,configureForTests}=await import('./packages/memory/src/extension.ts');
       const source=join(process.env.HOME,'allowed.json.acp.json');
-      const {writeFileSync}=await import('node:fs'); writeFileSync(source,'{}');
+      const {writeFileSync}=await import('node:fs'); writeFileSync(source,JSON.stringify({blocks:[{blockId:'b1',summary:'synthetic summary'}]}));
       writeFileSync(join(process.env.HOME,'.pi/sources'),JSON.stringify({id:'test',adapter:'pi-sidecar',root:process.env.HOME,pattern:'allowed.json.acp.json'}));
       configureForTests({dbPath:join(process.env.HOME,'.pi/memory.db'),sourcesPath:join(process.env.HOME,'.pi/sources'),logPath:join(process.env.HOME,'.pi/log'),scanOnStartup:false});
       await loadSqlite(); const seed=new MemoryDb(join(process.env.HOME,'.pi/memory.db')); seed.open();
@@ -58,10 +58,14 @@ test("real extension scans trigger background startup/incremental embedding; del
       let browserOutput='';
       ctx.ui.custom=async(build)=>{ const theme={fg:(_c,s)=>s,bold:s=>s}; const view=build({terminal:{rows:24},requestRender:()=>{}},theme,{},()=>{});
         assert.ok(!view.render(60).join('').includes('DETAIL_TAIL')); view.handleInput('\\r'); view.render(60); view.handleInput('\\x1b[F'); browserOutput=view.render(60).join(''); };
-      await commands.get('memory').handler('browse',ctx); assert.match(browserOutput,/DETAIL_TAIL/);
+      ctx.ui.select=async()=> 'Browse memories'; await commands.get('memory').handler('',ctx); assert.match(browserOutput,/DETAIL_TAIL/);
       seed.db.prepare('UPDATE blocks SET created_at=1 WHERE block_id=?').run('b1');
-      await commands.get('memory').handler('prune 30',ctx);assert.equal(confirms,1);assert.equal(seed.db.prepare('SELECT count(*) AS n FROM blocks').get().n,3);
-      allowDelete=true; await commands.get('memory').handler('prune 30',ctx);assert.equal(confirms,2);assert.equal(seed.db.prepare('SELECT count(*) AS n FROM blocks').get().n,2);
+      const countBefore=seed.db.prepare('SELECT count(*) n FROM blocks').get().n; const uploadsBefore=uploads;
+      for(const old of ['prune 0','prune 30','rescan','sources','browse','status','embed status','embed backfill 100']) await commands.get('memory').handler(old,ctx);
+      assert.equal(confirms,0);assert.equal(uploads,uploadsBefore);assert.equal(seed.db.prepare('SELECT count(*) n FROM blocks').get().n,countBefore);
+      ctx.ui.select=async()=> 'Prune old memories';ctx.ui.input=async()=> '30';
+      await commands.get('memory').handler('',ctx);assert.equal(confirms,1);assert.equal(seed.db.prepare('SELECT count(*) AS n FROM blocks').get().n,3);
+      allowDelete=true; await commands.get('memory').handler('',ctx);assert.equal(confirms,2);assert.equal(seed.db.prepare('SELECT count(*) AS n FROM blocks').get().n,2);
       await handlers.get('session_shutdown')({},ctx); seed.close();
     `], { cwd: process.cwd(), env: { ...process.env, HOME: dir, FUYAO_MEMORY_EMBEDDING_DISABLED: "0", TEST_AUTO_KEY: "synthetic", PI_ACP_DELEGATE_DEPTH: "0" }, encoding: "utf8", timeout: 20000 });
     assert.equal(child.status, 0, child.stderr + child.stdout);

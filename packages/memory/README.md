@@ -12,7 +12,7 @@
 查询 → 关键词排名 + 查询向量 / 余弦排名 → RRF 合并 → 有界摘要预览
 ```
 
-- `memory_search` 参数保持不变：`query`、可选 `project`、`limit`（最多 20）。
+- `memory_search`：`query`、可选 `scope`（默认 `current`，明确跨项目/旧历史用 `all`）、`project` 展示名过滤、`limit`（最多 20）。`memory_expand` 同样默认当前工作区，可显式指定 `scope: "all"`。
 - 项目过滤在关键词和语义两路都生效；向量余弦相似度门槛可配置。
 - RRF 使用 `1/(60 + rank)` 合并两路排名，不把 FTS 分值当作余弦分值。
 - 未启用、没有向量、服务失败时仍可用关键词搜索；返回会标明回退原因与覆盖率。
@@ -93,9 +93,9 @@ BCP 0.1.82 正常路径在返回前 await sidecar 原子保存（保存错误可
 卡片为 Pi `custom` entry，存入会话供用户回看，**不进入模型上下文、不触发续答**。
 非 TUI 和 BCP 子代理不输出自动卡片；关闭/切换会话会丢弃旧的延迟显示任务。
 
-旧子命令作为兼容快捷方式保留，不再需要记忆：`status`、`sources`、`rescan`、
-`embed status`、`embed backfill [1-100]`、`prune <days>`。手动补建默认最多 20 条。
-`prune` 即使走旧命令也必须确认；`prune 0` 删除所有带时间戳的摘要，不删除原始会话。
+用户入口只有 `/memory`，不再接受任何旧子命令参数。菜单提供浏览、活动、向量状态、
+扫描、补建、来源和清理；补建数量通过输入框指定 1–100 条，清理保留天数为 0–36500。
+上传和删除均需确认；保留 0 天删除所有带时间戳的摘要，不删除原始会话。
 RPC/无终端面板时 `/memory` 返回简短状态；不会创建 TUI 组件。
 模型工具 `memory_search` 和可选的 `memory_expand` 保持不变。
 
@@ -115,10 +115,36 @@ BCP 子代理（`PI_ACP_DELEGATE_DEPTH>0`）不启动自动任务。自动上传
 
 当前实现使用 JS 精确余弦遍历：流式读取 float32，只保留语义前 20 名，每 32 块
 让出事件循环；每个实例同时只进行一次语义查询，其余调用走关键词回退。
-补建只处理按数据库 id 排序最早的 `maxBlocks` 块，
+补建只处理通过来源校验后按数据库 id 排序最早的 `maxBlocks` 块，
 默认/硬上限为 10000；后续块不会因重复 backfill 自动进入这一区间。项目过滤搜索时也只
 扫描该项目最早的 `maxBlocks` 块。超过上限会显示覆盖率截断，需清理旧记录或后续升级
 分页索引。这是初版明确的容量限制，不是无限增量索引或百万记录 ANN 系统。
+
+## Workspace scope and source policy
+
+Local scope is the normalized current working directory (realpath when available).
+SSH scope adds the target, port and remote working directory, via a small read-only
+remote-ssh event. Different aliases, clones and subdirectories are not automatically
+merged. An unavailable remote is never treated as the local workspace.
+
+New persisted message IDs receive write-once workspace evidence. A BCP block is
+assigned only when all retained references have reliable evidence for one workspace.
+Old/resumed messages, transitions with uncertain timing, mixed workspaces and capped
+reference lists remain unknown/mixed. Tool-call suffixes resolve to parent message IDs
+for project attribution only. This is conservative retrieval isolation, not a sandbox.
+Use `scope: "all"` deliberately to retrieve legacy history. No old rows are relabeled
+from `sources.cwd`; project display names are not identity keys.
+
+Search, raw expansion and automatic/manual embedding all validate enabled sources,
+file format, block presence and the stored content/reference revision. Inactive BCP
+child blocks remain valid if still present. Revoked, missing, unreadable, absent or stale
+records stay in the database but are excluded from tools/uploads; the management browser
+shows the policy and attribution status. Validation is an operation snapshot, not an
+atomic filesystem lock: revocation cannot recall an already dispatched HTTP request.
+Version checks occur before result limits and each embedding network chunk; expansion
+revalidates after reading. Keyword search remains available with embeddings disabled.
+Policy-filtered semantic results currently omit global vector coverage rather than
+misreport an unfiltered total. Global `/memory` coverage includes retained excluded rows.
 
 ## 项目集成与验证
 
