@@ -43,9 +43,9 @@ may be smaller than the executor's; this patch adds no automatic fitting/truncat
 
 ## Usage and configuration
 
-Loaded through the root `fuyao-pi` manifest. Do not additionally install upstream
-RPIV Advisor. `bun run setup --apply` removes duplicate npm/standalone package
-entries. Explicit legacy `settings.extensions` paths need manual removal.
+Loaded as the local `packages/advisor` package by setup. Do not additionally install
+upstream RPIV Advisor. `bun run setup --apply` replaces duplicate upstream entries
+and migrates filters from the former root-package declaration. Explicit legacy `settings.extensions` paths need manual removal.
 
 Restart Pi, then `/advisor` to choose a reviewer and effort. No model is selected
 by this repository. Existing local `~/.config/rpiv-advisor/advisor.json` is reused;

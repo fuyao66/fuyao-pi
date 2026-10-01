@@ -13,7 +13,7 @@
 
 ## 在本仓库中加载
 
-根 `package.json` 的 `pi` manifest 直接声明本目录的五个扩展入口和主题。`bun run setup --apply` 会移除受识别的外部 Sakura UI 包声明，避免重复注册 UI 原型补丁与主题。不要再单独安装上游 Git/npm 包，也不要同时安装 `packages/ui` 和根包。
+`packages/ui/package.json` 声明五个扩展入口和主题。`bun run setup --apply` 将本目录作为独立本地包注册，保留旧根包的资源过滤并移除受识别的外部 Sakura UI 声明。不要再单独安装上游 Git/npm 包，避免重复注册 UI 补丁与主题。
 
 ## 定制入口
 

@@ -78,7 +78,7 @@ rollback and agent-directory limitations.
 
 - [ ] Behavior, docs and manifest entries agree; no promises for deferred designs.
 - [ ] Required tests/builds passed; untested real-world boundaries are recorded.
-- [ ] No duplicate root/child/upstream extension declarations.
+- [ ] No duplicate local/upstream extension declarations; root resources and child plugins remain separate.
 - [ ] `git diff --check` passes; only intended files are staged.
 - [ ] No private configuration, tokens, host inventory, sessions or databases staged.
 - [ ] Licenses and source provenance remain intact.

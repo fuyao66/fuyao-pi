@@ -9,6 +9,7 @@
 | [Configuration](configuration.md) | 安装、配置优先级、备份回滚、自定义 agent 目录、旧仓库迁移 |
 | [Plugin inventory](plugins.md) | 自研/派生/引用归属，以及固定版本清单 |
 | [Maintenance](maintenance.md) | 新增扩展、测试、升级与提交原则 |
+| [BCP compatibility](bcp-compatibility.md) | 版本变化、兼容验证及已知边界 |
 
 ## Capability contracts / 能力文档
 

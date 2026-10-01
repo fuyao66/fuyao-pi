@@ -151,7 +151,7 @@ misreport an unfiltered total. Global `/memory` coverage includes retained exclu
 
 ## 项目集成与验证
 
-根 `fuyao-pi` manifest 加载 `packages/memory/src/index.ts`；setup 替换外部 memory 包。
+setup 注册独立的 `packages/memory` 本地包，由其 manifest 加载 `src/index.ts`，并替换外部 memory 包。
 不要同时安装原插件。Node >=22.19（`node:sqlite`）为必需；Bun 用于仓库构建，
 记忆测试使用 Node：`bun run test:memory`。`bun run check` 会包含全部记忆测试。
 

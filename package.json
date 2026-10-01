@@ -7,19 +7,10 @@
   "repository": { "type": "git", "url": "https://github.com/fuyao66/fuyao-pi.git" },
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": [
-      "./packages/remote-ssh/dist/pi-extension.js",
-      "./packages/advisor/index.ts",
-      "./packages/memory/src/index.ts",
-      "./packages/ui/extensions/header/index.ts",
-      "./packages/ui/extensions/matrix/index.ts",
-      "./packages/ui/extensions/zentui/index.ts",
-      "./packages/ui/extensions/dual-quota/index.ts",
-      "./packages/ui/extensions/claude-shimmer/index.ts"
-    ],
+    "extensions": [],
     "skills": ["./skills"],
     "prompts": ["./prompts/*.md"],
-    "themes": ["./packages/ui/themes/*.json", "./themes/*.json"]
+    "themes": ["./themes/*.json"]
   },
   "license": "MIT",
   "workspaces": [

@@ -11,11 +11,11 @@
 | Environment composition | Root manifest, companion profile, public defaults | `package.json`, `config/`, `scripts/setup.ts`, root `test/` |
 | Private runtime state | The user's Pi installation and plugin-specific local files | Outside Git: model credentials, settings overrides, sessions, memory DB, SSH configuration |
 
-The root package loads the local extensions. Child manifests describe their package
-identity, but installing them again alongside the root creates duplicate registrations.
-Companion extensions come from `config/plugins.json`; the root manifest alone does
-not install them. `setup` orders BCP before the root package and preserves other
-unrelated package declarations. Actual root entry order is defined by `package.json`.
+Setup registers `packages/remote-ssh`, `packages/advisor`, `packages/memory` and
+`packages/ui` separately so `pi list` identifies each capability. Each child manifest
+owns its extensions and themes; the root package exposes only personal skills, prompts
+and themes. Companion extensions come from `config/plugins.json`. Setup loads BCP
+first, followed by local packages and companions, preserving unrelated declarations.
 
 ## Capabilities and contracts
 
