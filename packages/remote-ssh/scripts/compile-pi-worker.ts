@@ -1,6 +1,7 @@
 import { chmod, copyFile, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
+import { workerImports } from "./worker-imports.ts";
 const target = process.argv[2];
 if ((target !== "arm64" && target !== "x64") || process.argv.length > 3 || process.env.PI_WORKER_PLUGINS) throw new Error("Usage: bun scripts/compile-pi-worker.ts <arm64|x64> (fixed Pi core worker; no plugin selection)");
 const root = resolve(import.meta.dir, "..");
@@ -12,6 +13,7 @@ const piPackage = require.resolve("@earendil-works/pi-coding-agent/package.json"
 const { version } = JSON.parse(await readFile(piPackage, "utf8"));
 const result = await Bun.build({
   entrypoints: [resolve(root, "src/pi-worker.ts")],
+  plugins: [await workerImports()],
   define: { "process.env.PI_COMPILED": JSON.stringify("true"), "process.env.PI_BUNDLED_HOST_VERSION": JSON.stringify(version) },
   compile: { target: target === "arm64" ? "bun-linux-arm64" : "bun-linux-x64", outfile, autoloadBunfig: false, autoloadDotenv: false, autoloadTsconfig: false, autoloadPackageJson: false },
 });

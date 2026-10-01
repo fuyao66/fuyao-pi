@@ -1,10 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { RemoteRuntimeClient } from "../src/client.ts";
 import type { RemoteRuntimeHandshake } from "../src/runtime-contract.ts";
 const handshake: RemoteRuntimeHandshake = { host: "pi", hostVersion: "test", runtimeVersion: "fixture", requestedTools: ["read"], validateReady(ready) { expect(ready.host).toBe("pi"); } };
 
 describe("remote runtime disconnects", () => {
+  test("initialization error terminates the worker even after logical closure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "worker-init-error-"));
+    const pidFile = join(dir, "pid");
+    const client = new RemoteRuntimeClient({ command: ["bun", "-e", `
+      await Bun.write(${JSON.stringify(pidFile)}, String(process.pid));
+      console.log(JSON.stringify({type:'error',error:{name:'Mismatch',message:'rejected'}}));
+      setInterval(() => {}, 1000);
+    `] });
+    let pid: number | undefined;
+    try {
+      await expect(client.initialize("/unused", handshake)).rejects.toThrow("Mismatch");
+      pid = Number(await readFile(pidFile, "utf8"));
+      client.kill(); client.kill();
+      let alive = true;
+      for (let i = 0; i < 100; i++) {
+        try { process.kill(pid, 0); } catch { alive = false; break; }
+        await Bun.sleep(10);
+      }
+      expect(alive).toBe(false);
+    } finally {
+      client.kill();
+      if (pid) { try { process.kill(pid, "SIGKILL"); } catch {} }
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("rejects a pending tool call without local fallback", async () => {
     const client = new RemoteRuntimeClient({
       command: ["bun", join(import.meta.dir, "fixtures/hanging-worker.ts")],

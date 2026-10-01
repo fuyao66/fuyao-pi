@@ -258,13 +258,14 @@ export class RemoteRuntimeClient {
       pending.reject(error);
     } else {
       this.#rejectReady?.(error);
-      this.#close(error);
+      this.#terminate(error);
     }
   }
 
   #terminate(error: unknown): void {
     const failure = error instanceof Error ? error : new Error(String(error));
-    if (!this.#closed) this.#process.kill();
+    // Protocol closure does not imply process exit (e.g. initialization errors).
+    if (this.#process.exitCode === null && this.#process.signalCode === null) this.#process.kill();
     this.#close(failure);
   }
 

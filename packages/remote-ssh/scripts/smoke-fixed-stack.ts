@@ -9,7 +9,7 @@ import { resolvePiRuntimeAssembly } from "../src/pi/assembly.ts";
 // No model or SSH server needed: exercise the actual compiled worker, then a restricted
 // Pi child loading the built extension over an ssh process shim (not a transport mock).
 const root = resolve(import.meta.dir, "..");
-const worker = join(root, `dist/worker-linux-${process.arch}`);
+const worker = process.env.PI_SMOKE_WORKER ?? join(root, `dist/worker-linux-${process.arch}`);
 const cwd = await mkdtemp(join(tmpdir(), "pi-fixed-smoke-"));
 const saved = { ...process.env };
 let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -34,7 +34,22 @@ try {
   await writeFile(join(cwd, "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP8AAP8FAAH/+lyI0QAAAABJRU5ErkJggg==", "base64"));
   const image = await client.execute("read", "image", { path: "pixel.png" });
   assert.ok(JSON.stringify(image).includes('"type":"image"'), JSON.stringify(image));
+  // 3000x1 synthetic PNG exceeds Pi's default inline width and forces Photon resizing.
+  await writeFile(join(cwd, "wide.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAC7gAAAABCAYAAABO1+M+AAAAJUlEQVR4nO3DQQ0AAAwDofNvupOxDyS0mqqqqqqqqqqqqqqqfj+cQlnqxmLa0gAAAABJRU5ErkJggg==", "base64"));
+  const resized = JSON.stringify(await client.execute("read", "resize", { path: "wide.png" }));
+  assert.ok(resized.includes('"type":"image"') && resized.includes("original 3000x1, displayed at"), resized);
+  await assert.rejects(client.execute("read", "invalid", { path: 42 }));
+  const controller = new AbortController();
+  const slow = client.execute("bash", "cancel", { command: "sleep 10" }, controller.signal);
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(slow);
+  assert.ok(JSON.stringify(await client.execute("read", "after-cancel", { path: "probe.txt" })).includes("remote-modified"));
   await client.close();
+  const mismatch = new RemoteRuntimeClient({ command: [isolatedWorker], cwd });
+  try {
+    const wrongAssembly = await resolvePiRuntimeAssembly({ tools: tools.map(tool => ({ ...tool, sourceInfo: { source: "builtin", path: `<builtin:${tool.name}>`, scope: "temporary", origin: "top-level" } })), hostVersion: "0.0.0" });
+    await assert.rejects(mismatch.initialize(cwd, wrongAssembly.handshake));
+  } finally { mismatch.kill(); }
   const bin = join(cwd, "bin");
   await mkdir(bin);
   await writeFile(join(bin, "ssh"), `#!/bin/sh\nexec '${worker.replaceAll("'", "'\"'\"'")}'\n`);
