@@ -13,7 +13,7 @@ import {
   createLsToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
-import { resolveRemoteHome, prepareRemoteWorker } from "../deploy.ts";
+import { prepareRemoteWorker } from "../deploy.ts";
 import {
   parseConnectArgs,
   loadConfiguredSshHosts,
@@ -535,13 +535,6 @@ export async function installPiRemoteExtension(
       inheritance?.claim(state.inheritanceOwnerToken!);
     }
     try {
-      const remoteHome = await resolveRemoteHome({
-        target: parsed.target,
-        port: parsed.port,
-        identityFile: parsed.identityFile,
-        knownHostsFile: parsed.knownHostsFile,
-      });
-      const remoteCwd = parsed.cwd ?? remoteHome;
       const prepared = await prepareRemoteWorker(
         {
           target: parsed.target,
@@ -552,6 +545,8 @@ export async function installPiRemoteExtension(
         },
         assembly.workerBundle,
       );
+      const remoteCwd = parsed.cwd ?? prepared.home;
+      if (!remoteCwd) throw new Error("Remote cwd and probed remote home are unavailable");
       return await connectPrepared(
         assembly,
         parsed,

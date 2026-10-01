@@ -248,25 +248,33 @@ export async function prepareRemoteWorker(
   const marker = `${remoteDir}/${workerFile}.sha256`;
   const quotedWorker = quoteRemoteArgument(remoteWorker);
   const quotedMarker = quoteRemoteArgument(marker);
+  // Cache-hit connection: validate the entire bundle, link companions and prune in
+  // one round trip. Never trust a local "last deployed" flag for remote state.
+  const companions = await Promise.all(bundle.companionArtifacts.map(async artifact => {
+    const local = await resolveLocalCompanionBinary(artifact, arch, options.localArtifactDir);
+    const digest = await readWorkerHash(local);
+    const remote = `${cacheDir}/${bundle.cacheNamespace}/${artifact.id}/${arch}/${digest}/${artifact.executableName}`;
+    return { artifact, digest, remote };
+  }));
+  const checks = [
+    `test -x ${quotedWorker} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${hash}'`,
+    ...companions.map(({ remote, digest }) => `test -x ${quoteRemoteArgument(remote)} && test "$(cat ${quoteRemoteArgument(remote + ".sha256")} 2>/dev/null)" = '${digest}'`),
+  ];
+  const links = companions.map(({ remote, artifact }) =>
+    `ln -sf ${quoteRemoteArgument(remote)} ${quoteRemoteArgument(`${remoteDir}/${artifact.executableName}`)} || exit 1;`).join(" ");
+  const prune = buildPruneStaleWorkersCommand(`${cacheDir}/${bundle.cacheNamespace}`, hash);
+  // Cleanup must not turn a valid cached bundle into a failed connection. If the
+  // host lacks timeout, skip this optional maintenance on the fast path.
+  const boundedPrune = `if command -v timeout >/dev/null 2>&1; then timeout -k 1 2 sh -c ${quoteRemoteArgument(prune)} >/dev/null 2>&1 || :; fi;`;
   const exists = await run(
-    [
-      ...buildSshBaseCommand(options),
-      options.target,
-      `test -x ${quotedWorker} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${hash}' && printf present || printf missing`,
-    ],
-    "Remote worker check",
+    [...buildSshBaseCommand(options), options.target,
+      `if ${checks.join(" && ")}; then ${links} ${boundedPrune} printf ready; elif test -x ${quotedWorker} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${hash}'; then printf present; else printf missing; fi`],
+    "Remote bundle cache check",
   );
+  if (exists === "ready") return { workerPath: remoteWorker, home: probe.home };
   if (exists === "present") {
-    await deployCompanionArtifacts(
-      options,
-      probe.home,
-      arch,
-      remoteDir,
-      bundle,
-    );
-    await pruneStaleRemoteWorkers(options, `${cacheDir}/${bundle.cacheNamespace}`, hash).catch(
-      () => undefined,
-    );
+    await deployCompanionArtifacts(options, probe.home, arch, remoteDir, bundle);
+    await pruneStaleRemoteWorkers(options, `${cacheDir}/${bundle.cacheNamespace}`, hash).catch(() => undefined);
     return { workerPath: remoteWorker, home: probe.home };
   }
   if (exists !== "missing")
@@ -392,6 +400,8 @@ async function deployCompanionArtifact(
     `${artifact.id} companion artifact check`,
   );
 
+  if (exists !== "present" && exists !== "missing")
+    throw new Error(`Unexpected companion artifact check response: ${exists}`);
   if (exists !== "present") {
     await run(
       [

@@ -128,6 +128,9 @@ try {
     content: "export interface RemoteBenchmark { id: string }\n",
   });
 
+  const firstRead = await sample(1, () =>
+    client.execute("read", "benchmark-first-read", { path: benchmarkFile }),
+  );
   const reads = await sample(12, (index) =>
     client.execute("read", `benchmark-read-${index}`, { path: benchmarkFile }),
   );
@@ -143,6 +146,7 @@ try {
       toolCount: ready.tools.length,
       deployCacheMs,
       initializeMs,
+      firstReadMs: firstRead[0],
       read: summary(reads),
       bash: summary(shells),
     }),

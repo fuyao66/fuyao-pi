@@ -52,6 +52,8 @@ For your custom Pi agent, load that same built entry through `DefaultResourceLoa
 
 Do not enable the old AFT/FFF/RTK/Tintin managed entries. They and the plugin-selection build system have been removed. Building does not modify global Pi settings or install extensions into your agent. Disable BCP auto-update for this pinned profile, and revalidate when upgrading BCP.
 
+Connection measurements and benchmark instructions: [Performance](docs/performance.md).
+
 ## Usage
 
 ```text
