@@ -4,21 +4,28 @@
 
 [English](README.md) · [文档导航](docs/README.md) · [系统架构](docs/architecture.md) · [维护指南](docs/maintenance.md)
 
-## 这套环境包含什么
+## 插件清单
 
-| 能力 | 实现位置 | 职责 |
+共 **10 个插件包：1 个自研、3 个本地改装、6 个社区插件**。Pi core 是运行底座，不计入插件数量；UI 的五个扩展入口和主题按一个包计数。
+
+| 插件 | 归属 / 来源 | 作用 |
 | --- | --- | --- |
-| Agent 运行底座 | 上游 Pi core | 模型接入、会话、工具与扩展生命周期 |
-| 上下文管理 | 固定版本 billion-context-pi（BCP） | 压缩、恢复和委托任务 |
-| 终端体验 | [`packages/ui`](packages/ui/UPSTREAM.md) | 本地维护的 Sakura 派生界面与主题 |
-| 第二意见 | [`packages/advisor`](packages/advisor/UPSTREAM.md) | 根据 BCP 处理后的上下文进行无工具审核 |
-| 项目记忆 | [`packages/memory`](packages/memory/README.md) | 跨会话摘要检索、工作区范围及可选向量索引 |
-| 远程工作区 | [`packages/remote-ssh`](packages/remote-ssh/README.zh-CN.md) | 核心工作区工具通过 SSH 执行，编排留在本地 |
-| 配套工具 | [`config/plugins.json`](config/plugins.json) | 固定版本的提问、任务、联网、目标和续跑插件 |
+| [Remote SSH](packages/remote-ssh/README.zh-CN.md) | 自研，`pi-ssh-remote` | 通过 SSH 执行核心工作区工具，继承 delegate 的远端连接，控制面留在本地 |
+| [UI](packages/ui/UPSTREAM.md) | 改装自 `pi-sakura-cyberdeck@1.1.5` | 终端编辑区、消息与工具输出、页头、配额展示和主题 |
+| [Advisor](packages/advisor/UPSTREAM.md) | 改装自 `@juicesharp/rpiv-advisor@2.11.0` | 由另一模型提供第二意见，使用 BCP 处理后的上下文而非重放原始历史 |
+| [Memory](packages/memory/UPSTREAM.md) | 改装自 `pi-billion-memory@0.5.3` | BCP 摘要跨会话检索、项目隔离、自动增量同步及可选 Embedding 混合检索 |
+| `billion-context-pi`（BCP） | 社区，可直接安装 | 长上下文压缩、摘要恢复、上下文诊断和子代理委托 |
+| `@juicesharp/rpiv-ask-user-question` | 社区，可直接安装 | 结构化提问，提供单选、多选及自定义输入 |
+| `@juicesharp/rpiv-todo` | 社区，可直接安装 | 管理任务列表、状态及依赖关系 |
+| `pi-web-access` | 社区，可直接安装 | 网页搜索、内容抓取和来源核查 |
+| `@schovest/pi-goal` | 社区，可直接安装 | 设置会话目标，在限制内自动推进并报告完成或阻塞 |
+| `pi-invisible-continue` | 社区，可直接安装 | 自动发送续跑信号，减少手动催促继续 |
+
+四个本地插件通过本仓库构建、setup 加载；六个社区插件保留上游实现。具体版本、上游链接、改装说明和独立安装命令见[完整清单](docs/plugins.md)。
 
 ## 快速开始
 
-基线：**Pi 0.87.1 + BCP 0.1.82**。需要 Node.js **22.19+**、Bun 和 Git；SSH 工作流另需 OpenSSH。远端 worker 面向 Linux x64/arm64。向已有 Pi 环境应用前，请先看[配置说明](docs/configuration.md)。
+运行版本：**Pi 0.87.1**。需要 Node.js **22.19+**、Bun 和 Git；SSH 工作流另需 OpenSSH。远端 worker 面向 Linux x64/arm64。向已有 Pi 环境应用前，请先看[配置说明](docs/configuration.md)。
 
 ```sh
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1

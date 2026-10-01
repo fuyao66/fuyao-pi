@@ -4,21 +4,28 @@ Personal Pi Agent environment with customized extensions and configuration.
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Architecture](docs/architecture.md) · [Maintenance](docs/maintenance.md)
 
-## What the environment includes
+## Plugins
 
-| Capability | Implementation | Responsibility |
+**10 plugin packages: 1 first-party, 3 locally modified, and 6 community packages.** Pi core is the runtime, not a plugin. The UI's five extension entries and theme count as one package.
+
+| Plugin | Ownership / origin | Purpose |
 | --- | --- | --- |
-| Agent runtime | Upstream Pi core | Model access, sessions, tools and extension lifecycle |
-| Context management | Pinned billion-context-pi (BCP) | Compression, recovery and delegation |
-| Terminal experience | [`packages/ui`](packages/ui/UPSTREAM.md) | Locally maintained Sakura-derived interface and theme |
-| Second opinion | [`packages/advisor`](packages/advisor/UPSTREAM.md) | Tool-free review using BCP-transformed conversation snapshots |
-| Project memory | [`packages/memory`](packages/memory/README.md) | Cross-session summary search, workspace scope and optional embeddings |
-| Remote workspace | [`packages/remote-ssh`](packages/remote-ssh/README.md) | Run core workspace tools over SSH while keeping orchestration local |
-| Companion tools | [`config/plugins.json`](config/plugins.json) | Pinned question, task, web, goal and continuation extensions |
+| [Remote SSH](packages/remote-ssh/README.md) | First-party, `pi-ssh-remote` | Core workspace tools over SSH, inherited delegate connections, local orchestration |
+| [UI](packages/ui/UPSTREAM.md) | Modified from `pi-sakura-cyberdeck@1.1.5` | Terminal editor, messages, tool output, header, quota display and theme |
+| [Advisor](packages/advisor/UPSTREAM.md) | Modified from `@juicesharp/rpiv-advisor@2.11.0` | Second-model review of BCP-transformed context instead of raw history replay |
+| [Memory](packages/memory/UPSTREAM.md) | Modified from `pi-billion-memory@0.5.3` | Cross-session BCP summary search, project scope, incremental synchronization and optional embedding-based hybrid retrieval |
+| `billion-context-pi` (BCP) | Community, directly installable | Context compression, recovery, diagnostics and sub-agent delegation |
+| `@juicesharp/rpiv-ask-user-question` | Community, directly installable | Structured single/multiple-choice questions and custom input |
+| `@juicesharp/rpiv-todo` | Community, directly installable | Task lists, status tracking and dependencies |
+| `pi-web-access` | Community, directly installable | Web search, content fetching and source checks |
+| `@schovest/pi-goal` | Community, directly installable | Session goals with bounded automatic progress and completion/blocker reporting |
+| `pi-invisible-continue` | Community, directly installable | Automatic continuation signals to reduce manual continue prompts |
+
+The four local packages are built/configured through this repository; the six community packages use upstream implementations. See the [full inventory](docs/plugins.md) for versions, upstream links, local modifications and standalone installation commands.
 
 ## Quick start
 
-Baseline: **Pi 0.87.1 + BCP 0.1.82**. Use Node.js **22.19+**, Bun and Git; SSH workflows also require OpenSSH. The remote worker targets Linux x64/arm64. See [configuration](docs/configuration.md) before applying the profile to an existing Pi installation.
+Runtime: **Pi 0.87.1**. Use Node.js **22.19+**, Bun and Git; SSH workflows also require OpenSSH. The remote worker targets Linux x64/arm64. See [configuration](docs/configuration.md) before applying the profile to an existing Pi installation.
 
 ```sh
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
