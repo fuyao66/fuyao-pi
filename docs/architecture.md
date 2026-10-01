@@ -13,8 +13,7 @@
 
 Setup registers `packages/remote-ssh`, `packages/advisor`, `packages/memory` and
 `packages/ui` separately so `pi list` identifies each capability. Each child manifest
-owns its extensions and themes; the root package exposes only personal skills, prompts
-and themes. Companion extensions come from `config/plugins.json`. Setup loads BCP
+owns its extensions and themes. Reserved root resources are not loaded by setup. Companion extensions come from `config/plugins.json`. Setup loads BCP
 first, followed by local packages and companions, preserving unrelated declarations.
 
 ## Capabilities and contracts

@@ -26,9 +26,9 @@
 3. `~/.pi/agent/settings.json`：实际运行配置。setup **只填补缺失的顶层默认项**，不会强制重置已有偏好；受管理插件替换为固定版本，保留第三方包对象的资源过滤字段。旧的外部 Sakura UI 包声明会被删除，由仓库内 `packages/ui` 替代（不保留旧声明的资源过滤，默认加载该 UI 的五个入口和主题）；旧的 `npm:@juicesharp/rpiv-advisor` 和独立 `packages/advisor` 包声明也会被仓库内 Advisor 替代；上游 `pi-billion-memory` Git/npm 及独立 Memory 包声明由 `packages/memory` 替代。显式写在 `extensions` 中的旧入口需手工移除。其余插件保持原样。
 4. 模型、密钥和插件私密配置：继续留在本地，不导出到本仓库。
 
-必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / UI → 根资源包 → 其他 companion 包。
+必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / UI → 其他 companion 包。
 
-从旧整包加载迁移时，setup 将根条目的资源过滤规则转换到子包，保留已禁用的扩展。之后可用 `pi config` 分别管理子包。`pi list` 的 `(filtered)` 表示存在资源筛选，不是错误。
+从旧整包加载迁移时，setup 将根条目的资源过滤规则转换到子包，保留已禁用的扩展。空的根资源包条目会移除；之后可用 `pi config` 分别管理子包。`pi list` 的 `(filtered)` 表示存在资源筛选，不是错误。
 
 ## Memory 本地配置
 

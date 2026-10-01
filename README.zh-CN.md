@@ -44,7 +44,7 @@ bun run smoke:pi
 
 模型访问权限在本地 Pi 中单独配置；仓库不提供 Advisor 审核模型选择或 Memory Embedding 服务凭证。使用自定义 agent 目录时，setup、update 和启动需使用相同的 `PI_CODING_AGENT_DIR`；个别插件状态仍使用固定的 home 路径。
 
-**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 UI、Advisor、Memory 和 Remote SSH 注册为独立本地包，`pi list` 可分别查看；根条目仅提供个人资源。不要再安装这些本地插件的上游版本。
+**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 UI、Advisor、Memory 和 Remote SSH 注册为独立本地包，`pi list` 可分别查看。不要再安装这些本地插件的上游版本。
 
 ## 日常入口
 

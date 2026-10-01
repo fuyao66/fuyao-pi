@@ -87,9 +87,6 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     return result;
   };
   const previousRoot = findOld(root) ?? findOld(legacyRoot);
-  const rootEntry: PackageEntry = previousRoot ? relocate(previousRoot, root) : root;
-  // The root now exposes only personal resources, never child extensions.
-  if (typeof rootEntry === "object") delete rootEntry.extensions;
   const children = localPlugins.map((name): PackageEntry => {
     const source = resolve(root, "packages", name);
     const previous = findOld(source) ?? findOld(resolve(legacyRoot, "packages", name));
@@ -105,8 +102,8 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     }
     return Object.keys(entry).length > 1 ? entry : source;
   });
-  // BCP must load before the remote bridge. Root owns only personal resources.
-  const packages: PackageEntry[] = [pin(sources[0]!), ...children, rootEntry, ...sources.slice(1).map(pin)];
+  // BCP must load before the remote bridge. Reserved root resources are not loaded.
+  const packages: PackageEntry[] = [pin(sources[0]!), ...children, ...sources.slice(1).map(pin)];
   for (const entry of old) {
     const id = identity(sourceOf(entry));
     if (!managedIds.has(id) && !localIds.has(id) && !replacedIds.has(id)) packages.push(entry);

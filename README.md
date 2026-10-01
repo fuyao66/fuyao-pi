@@ -44,7 +44,7 @@ bun run smoke:pi
 
 Configure model access separately in your local Pi environment. Advisor model selection and Memory embedding service credentials are not supplied by this repository. For a custom agent directory, use the same `PI_CODING_AGENT_DIR` for setup, update and launch; some plugin-specific state still uses fixed home-directory paths.
 
-**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Setup registers UI, Advisor, Memory and Remote SSH as separate local packages, visible in `pi list`. The root entry supplies personal resources only; do not also install the upstream versions of these local plugins.
+**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Setup registers UI, Advisor, Memory and Remote SSH as separate local packages, visible in `pi list`. Do not also install the upstream versions of these local plugins.
 
 ## Everyday entry points
 

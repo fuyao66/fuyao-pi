@@ -16,7 +16,7 @@ const upstreamUi = [
 ];
 const root = "/workspace/fuyao-pi";
 const agentDir = "/home/test/.pi/agent";
-const locals = [...localPlugins.map(name => `${root}/packages/${name}`), root];
+const locals = localPlugins.map(name => `${root}/packages/${name}`);
 
 describe("personal Pi profile", () => {
   test("normalizes pinned npm and shorthand Git sources", () => {
@@ -64,7 +64,7 @@ describe("personal Pi profile", () => {
       expect(result.packages).toContainEqual({ source: `${root}/packages/${name}`,
         extensions: [`!${root}/packages/ui/extensions/matrix/index.ts`, `!${root}/packages/ui/extensions/dual-quota/index.ts`], themes: [] });
     }
-    expect(result.packages).toContainEqual({ source: root, themes: [] });
+    expect(result.packages).toHaveLength(sources.length + localPlugins.length);
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
   });
 
@@ -77,6 +77,13 @@ describe("personal Pi profile", () => {
     expect(() => rebaseFilters("bad", root)).toThrow();
   });
 
+  test("removes the empty root entry without changing existing children or unrelated packages", () => {
+    const children = locals.map(source => ({ source, extensions: ["!extensions/matrix/index.ts"] }));
+    const result = mergeProfile({ packages: [sources[0], ...children, { source: root }, sources[1], "npm:unrelated"] }, {}, sources, root, agentDir);
+    expect(result.packages).toEqual([sources[0], ...children, sources[1], "npm:unrelated"]);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+  });
+
   test("keeps child resource filters on subsequent setup", () => {
     const child = { source: `${root}/packages/ui`, extensions: ["!extensions/matrix/index.ts"] };
     const result = mergeProfile({ packages: [child] }, {}, sources, root, agentDir);
@@ -84,12 +91,12 @@ describe("personal Pi profile", () => {
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
   });
 
-  test("relocates absolute filters for existing legacy children and root resources", () => {
+  test("relocates legacy child filters and removes the legacy root entry", () => {
     const result = mergeProfile({ packages: [
       { source: "/workspace/pi-ssh-remote", themes: ["-/workspace/pi-ssh-remote/themes/a.json"] },
       { source: "/workspace/pi-ssh-remote/packages/ui", extensions: ["-/workspace/pi-ssh-remote/packages/ui/extensions/matrix/index.ts"] },
     ] }, {}, sources, root, agentDir);
-    expect(result.packages).toContainEqual({ source: root, themes: [`-${root}/themes/a.json`] });
+    expect(result.packages!.map(e => typeof e === "string" ? e : e.source)).not.toContain(root);
     expect(result.packages).toContainEqual({ source: `${root}/packages/ui`, extensions: [`-${root}/packages/ui/extensions/matrix/index.ts`] });
     expect(() => rebaseFilters(["!{index.ts,packages/ui/**}"], root)).toThrow(/manual/);
   });
