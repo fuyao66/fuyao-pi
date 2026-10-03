@@ -15,7 +15,7 @@
 | `pi update --extensions` | 安装/校准配套上游扩展，不更新本地派生源码 |
 | `bun run build:pi-worker:all` | 首次 SSH 使用前生成 Linux x64/arm64 worker |
 | `bun run smoke:pi` | 验证进程替身下的 SSH 桥接；不是真实 SSH 连接 |
-| 重启 `ACP_AUTO_UPDATE=0 pi` | 以固定 BCP 基线加载新扩展/配置 |
+| 重启 `pi` | 以固定 BCP 基线加载新扩展/配置；setup 已关闭 BCP 自动更新 |
 
 模型认证另行在本地 Pi 配置。所有根命令从仓库根目录执行。
 
@@ -24,7 +24,8 @@
 1. `config/settings.json`：公开的个人默认偏好，不包含私有模型/provider。
 2. `config/plugins.json`：第三方包来源与版本；setup 分别注册 `packages/remote-ssh`、`packages/advisor`、`packages/memory`、`packages/ui`；根包仅提供个人 skills/prompts/themes。
 3. `~/.pi/agent/settings.json`：实际运行配置。setup **只填补缺失的顶层默认项**，不会强制重置已有偏好；受管理插件替换为固定版本，保留第三方包对象的资源过滤字段。旧的外部 Sakura UI 包声明会被删除，由仓库内 `packages/ui` 替代（不保留旧声明的资源过滤，默认加载该 UI 的五个入口和主题）；旧的 `npm:@juicesharp/rpiv-advisor` 和独立 `packages/advisor` 包声明也会被仓库内 Advisor 替代；上游 `pi-billion-memory` Git/npm 及独立 Memory 包声明由 `packages/memory` 替代。显式写在 `extensions` 中的旧入口需手工移除。其余插件保持原样。
-4. 模型、密钥和插件私密配置：继续留在本地，不导出到本仓库。
+4. `~/.pi/acp.json`：BCP 的用户级配置。`setup --apply` 将 `autoUpdate` 设为 `false`，保留其他 ACP 设置并为已有文件备份。
+5. 模型、密钥和插件私密配置：继续留在本地，不导出到本仓库。
 
 必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / UI → 其他 companion 包。
 
@@ -46,7 +47,7 @@ bun run setup --agent-dir /tmp/pi-profile # 预览另一个配置目录
 
 备份路径形如 `settings.json.bak-fuyao-pi-<uuid>`，位于目标 agent 目录。回滚时退出 Pi，将对应备份复制回 `settings.json`，再重启。新配置目录没有旧文件时不生成备份。
 
-应用声明后运行 `pi update --extensions` 下载或校准第三方包。若使用自定义 agent 目录，该命令与启动 Pi 时均设置同一个 `PI_CODING_AGENT_DIR`。第三方包可能带安装脚本与可执行扩展，先审核上游再加载。
+应用声明后运行 `pi update --extensions` 下载或校准配置中的固定第三方包。若使用自定义 agent 目录，该命令与启动 Pi 时均设置同一个 `PI_CODING_AGENT_DIR`。`setup --apply` 同时关闭 BCP 的官方自动更新；第三方包可能带安装脚本与可执行扩展，先审核上游再加载。
 
 ## 历史迁移：从 SSH 插件仓库到环境仓库
 
@@ -77,7 +78,7 @@ setup 识别同级旧 `pi-ssh-remote` 工作副本及其 `packages/pi` 路径声
 ## 私密配置
 
 - `auth.json`、`models.json`、`models-store.json`：本地保留。
-- `web-search.json`、`acp.json` 等插件配置：本地保留，公开模板如有需要须单独脱敏制作。
+- `web-search.json`、`acp.json` 等插件配置：本地保留；setup 只维护 `acp.json` 的 `autoUpdate` 开关，其他内容不入库。
 - SSH hosts、私钥、known_hosts：由本地 OpenSSH 管理，不提交。
 - BCP / memory 数据库、会话、缓存：运行数据，不属于源代码。
 - 可将个人未公开文件放在被忽略的 `local/`，但 Pi 不会自动加载该目录，需在本地配置显式引用。

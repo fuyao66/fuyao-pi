@@ -31,6 +31,8 @@ Known boundaries:
 - `pi list` shows the configured package source, not the loaded process version.
   Disk packages, configured pins and already-running processes can differ.
 
-The repository baseline remains pinned to 0.1.82. Change the profile and test dependency
-together when adopting a new baseline; this compatibility check did not upgrade the
-active installation.
+BCP is a pinned community peer plugin, not a fuyao-pi or Remote SSH source dependency.
+The current profile selects the validated release in `config/plugins.json` and disables
+BCP's official automatic updater through `setup --apply`. Future BCP releases should be
+reviewed as a complete profile update; this compatibility record should be extended
+before changing that pin.

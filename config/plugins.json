@@ -1,7 +1,7 @@
 {
   "piVersion": "0.87.1",
   "packages": [
-    "npm:billion-context-pi@0.1.82",
+    "npm:billion-context-pi@0.1.83",
     "npm:@juicesharp/rpiv-ask-user-question@2.11.0",
     "npm:@juicesharp/rpiv-todo@2.11.0",
     "npm:pi-web-access@0.33.0",

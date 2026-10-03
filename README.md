@@ -11,9 +11,9 @@ Personal Pi Agent environment with customized extensions and configuration.
 | Plugin | Ownership / origin | Purpose |
 | --- | --- | --- |
 | [Remote SSH](packages/remote-ssh/README.md) | First-party, `pi-ssh-remote` | Core workspace tools over SSH, inherited delegate connections, local orchestration |
-| [UI](packages/ui/UPSTREAM.md) | Modified from `pi-sakura-cyberdeck@1.1.5` | Terminal editor, messages, tool output, header, quota display and theme |
-| [Advisor](packages/advisor/UPSTREAM.md) | Modified from `@juicesharp/rpiv-advisor@2.11.0` | Second-model review of BCP-transformed context instead of raw history replay |
-| [Memory](packages/memory/UPSTREAM.md) | Modified from `pi-billion-memory@0.5.3` | Cross-session BCP summary search, project scope, incremental synchronization and optional embedding-based hybrid retrieval |
+| [UI](packages/ui/UPSTREAM.md) | Locally maintained derivative | Terminal editor, messages, tool output, header, quota display and theme |
+| [Advisor](packages/advisor/UPSTREAM.md) | Locally maintained derivative | Second-model review of BCP-transformed context instead of raw history replay |
+| [Memory](packages/memory/UPSTREAM.md) | Locally maintained derivative | Cross-session BCP summary search, project scope, incremental synchronization and optional embedding-based hybrid retrieval |
 | `billion-context-pi` (BCP) | Community, directly installable | Context compression, recovery, diagnostics and sub-agent delegation |
 | `@juicesharp/rpiv-ask-user-question` | Community, directly installable | Structured single/multiple-choice questions and custom input |
 | `@juicesharp/rpiv-todo` | Community, directly installable | Task lists, status tracking and dependencies |
@@ -25,7 +25,7 @@ The four local packages are built/configured through this repository; the six co
 
 ## Quick start
 
-Runtime: **Pi 0.87.1**. Use Node.js **22.19+**, Bun and Git; SSH workflows also require OpenSSH. The remote worker targets Linux x64/arm64. See [configuration](docs/configuration.md) before applying the profile to an existing Pi installation.
+Runtime: Pi, Node.js **22.19+**, Bun and Git; SSH workflows also require OpenSSH. The remote worker targets Linux x64/arm64. The supported Pi baseline is recorded in `config/plugins.json` and the dependency lock. See [configuration](docs/configuration.md) before applying the profile to an existing Pi installation.
 
 ```sh
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
@@ -37,9 +37,9 @@ bun run check
 # Preview, then back up and merge the public profile.
 bun run setup
 bun run setup --apply
-# Review companion packages before downloading/loading them.
+# Download the pinned companion packages, then restart Pi.
 pi update --extensions
-ACP_AUTO_UPDATE=0 pi
+pi
 ```
 
 `check` builds the local remote-ssh entry; **it does not compile remote workers**. Before the first SSH connection:
@@ -84,7 +84,7 @@ Each plugin contains its source, tests and provenance. Current UI themes live in
 
 - Pi core remains upstream. Local derivatives retain licenses and attribution; upstream updates require deliberate review, not blind replacement.
 - Models, sessions, UI, Advisor, Memory and BCP orchestration stay local; only supported workspace operations run remotely. Other plugins are **not automatically SSH-aware**.
-- Public settings disable native automatic compaction for the BCP profile and allow up to 20 retries. Existing settings take precedence; review latency/cost trade-offs. Keep `ACP_AUTO_UPDATE=0` when validating against the pinned BCP version.
+- Public settings disable native automatic compaction for the BCP profile and allow up to 20 retries. Setup also disables BCP's automatic updater for the pinned profile. Existing settings take precedence; review latency/cost trade-offs.
 - Keep credentials, private endpoints, host inventories, sessions and databases out of Git. Setup merges declarations/defaults; it neither installs models nor copies private plugin state.
 - `bun run check` includes Memory's Node-based SQLite tests. SSH smoke uses a process shim, not a real SSH server; terminal visuals, real providers and ARM64 execution need separate validation.
 

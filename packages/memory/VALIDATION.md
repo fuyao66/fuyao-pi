@@ -1,6 +1,6 @@
 # Initial validation (2026-09-30)
 
-Baseline: Pi 0.87.1, billion-context-pi 0.1.82, Node 24.14.1.
+Validation environment: Pi 0.87.1, Node 24.14.1. BCP is loaded from the pinned profile entry; rerun compatibility checks as part of each deliberate BCP upgrade.
 
 - Root typecheck/build/UI checks and 58 Bun tests (231 assertions) pass.
 - Preserved upstream self-tests: 139 checks pass.

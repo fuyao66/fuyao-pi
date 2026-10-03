@@ -11,9 +11,9 @@
 | 插件 | 归属 / 来源 | 作用 |
 | --- | --- | --- |
 | [Remote SSH](packages/remote-ssh/README.zh-CN.md) | 自研，`pi-ssh-remote` | 通过 SSH 执行核心工作区工具，继承 delegate 的远端连接，控制面留在本地 |
-| [UI](packages/ui/UPSTREAM.md) | 改装自 `pi-sakura-cyberdeck@1.1.5` | 终端编辑区、消息与工具输出、页头、配额展示和主题 |
-| [Advisor](packages/advisor/UPSTREAM.md) | 改装自 `@juicesharp/rpiv-advisor@2.11.0` | 由另一模型提供第二意见，使用 BCP 处理后的上下文而非重放原始历史 |
-| [Memory](packages/memory/UPSTREAM.md) | 改装自 `pi-billion-memory@0.5.3` | BCP 摘要跨会话检索、项目隔离、自动增量同步及可选 Embedding 混合检索 |
+| [UI](packages/ui/UPSTREAM.md) | 本地维护的派生插件 | 终端编辑区、消息与工具输出、页头、配额展示和主题 |
+| [Advisor](packages/advisor/UPSTREAM.md) | 本地维护的派生插件 | 由另一模型提供第二意见，使用 BCP 处理后的上下文而非重放原始历史 |
+| [Memory](packages/memory/UPSTREAM.md) | 本地维护的派生插件 | BCP 摘要跨会话检索、项目隔离、自动增量同步及可选 Embedding 混合检索 |
 | `billion-context-pi`（BCP） | 社区，可直接安装 | 长上下文压缩、摘要恢复、上下文诊断和子代理委托 |
 | `@juicesharp/rpiv-ask-user-question` | 社区，可直接安装 | 结构化提问，提供单选、多选及自定义输入 |
 | `@juicesharp/rpiv-todo` | 社区，可直接安装 | 管理任务列表、状态及依赖关系 |
@@ -25,7 +25,7 @@
 
 ## 快速开始
 
-运行版本：**Pi 0.87.1**。需要 Node.js **22.19+**、Bun 和 Git；SSH 工作流另需 OpenSSH。远端 worker 面向 Linux x64/arm64。向已有 Pi 环境应用前，请先看[配置说明](docs/configuration.md)。
+运行环境需要 Pi、Node.js **22.19+**、Bun 和 Git；SSH 工作流另需 OpenSSH。远端 worker 面向 Linux x64/arm64。支持的 Pi 基线记录在 `config/plugins.json` 和依赖锁文件中。向已有 Pi 环境应用前，请先看[配置说明](docs/configuration.md)。
 
 ```sh
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
@@ -37,9 +37,9 @@ bun run check
 # 先预览，再备份并合并公开配置
 bun run setup
 bun run setup --apply
-# 下载、加载前先审查配套插件
+# 下载固定版本的配套插件，然后重启 Pi
 pi update --extensions
-ACP_AUTO_UPDATE=0 pi
+pi
 ```
 
 `check` 会构建本地 remote-ssh 扩展入口，**不会编译远端 worker**。首次使用 SSH 前再执行：
@@ -84,7 +84,7 @@ skills/ prompts/ themes/ 个人资源预留目录，目前仅占位
 
 - Pi core 跟随上游；派生扩展保留许可证和归属，升级须人工审查，不盲目覆盖本地修改。
 - 模型、会话、UI、Advisor、Memory 和 BCP 编排留在本地；只有受支持的工作区操作远程执行。其他插件**不会自动获得 SSH 兼容性**。
-- 公开默认关闭 Pi 原生自动压缩，以配合 BCP；重试上限为 20 次。已有设置优先，请根据费用与延迟调整。验证固定 BCP 基线时保持 `ACP_AUTO_UPDATE=0`。
+- 公开默认关闭 Pi 原生自动压缩，以配合 BCP；重试上限为 20 次。setup 会为固定版本配置关闭 BCP 自动更新。已有设置优先，请根据费用与延迟调整。
 - 凭证、私有服务地址、主机信息、会话及数据库不入库。setup 只合并声明和默认值，不安装模型、不复制插件私密状态。
 - `bun run check` 包含 Memory 的 Node SQLite 测试。SSH smoke 使用进程替身，不是真实 SSH 服务；真实终端视觉、供应商请求及 ARM64 运行需另行验证。
 

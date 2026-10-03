@@ -111,22 +111,44 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
   return { ...defaults, ...existing, packages };
 }
 
-export async function setup(agentDir: string, apply: boolean, root = repoRoot): Promise<{ changed: boolean; backup?: string }> {
+type AcpSettings = Record<string, unknown>;
+
+async function readOptional(path: string): Promise<string | undefined> {
+  try { return await readFile(path, "utf8"); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return undefined;
+  }
+}
+
+export async function setup(
+  agentDir: string,
+  apply: boolean,
+  root = repoRoot,
+  acpPath = resolve(homedir(), ".pi/acp.json"),
+): Promise<{ changed: boolean; backup?: string; acpBackup?: string }> {
   const target = resolve(agentDir, "settings.json");
   const defaults = JSON.parse(await readFile(resolve(root, "config/settings.json"), "utf8")) as Settings;
   const manifest = JSON.parse(await readFile(resolve(root, "config/plugins.json"), "utf8")) as { packages: string[] };
-  if (!Array.isArray(manifest.packages) || !manifest.packages[0]?.startsWith("npm:billion-context-pi@")) throw new Error("Profile must load pinned BCP first");
-  let original: string | undefined;
-  try { original = await readFile(target, "utf8"); } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  if (!Array.isArray(manifest.packages) || !manifest.packages[0]?.startsWith("npm:billion-context-pi@")) {
+    throw new Error("Profile must load pinned BCP first");
   }
+  const original = await readOptional(target);
   const existing = original === undefined ? {} : JSON.parse(original);
   if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error("settings.json must be an object");
   const next = mergeProfile(existing, defaults, manifest.packages, root, agentDir);
-  const changed = JSON.stringify(existing) !== JSON.stringify(next);
+  const settingsChanged = JSON.stringify(existing) !== JSON.stringify(next);
+
+  const originalAcp = await readOptional(acpPath);
+  const existingAcp = originalAcp === undefined ? {} : JSON.parse(originalAcp) as AcpSettings;
+  if (!existingAcp || typeof existingAcp !== "object" || Array.isArray(existingAcp)) throw new Error("acp.json must be an object");
+  const nextAcp = { ...existingAcp, autoUpdate: false };
+  const acpChanged = JSON.stringify(existingAcp) !== JSON.stringify(nextAcp);
+  const changed = settingsChanged || acpChanged;
+
   console.log(`${apply ? "Apply" : "Preview"}: ${target}`);
   console.log("Managed packages (unrelated packages/preferences preserved; upstream UI / Advisor / Memory replaced by in-repo forks):");
   for (const entry of next.packages ?? []) console.log(`  ${sourceOf(entry)}${typeof entry === "object" ? " (filtered)" : ""}`);
+  console.log(`BCP auto-update: disabled in ${acpPath}`);
   if (!apply || !changed) {
     console.log(changed ? "No files changed. Use --apply after reviewing the profile." : "Profile already configured.");
     return { changed };
@@ -134,15 +156,27 @@ export async function setup(agentDir: string, apply: boolean, root = repoRoot): 
   // Only a built entry can be installed. No downloads or model calls are made here.
   await access(resolve(root, "packages/remote-ssh/dist/pi-extension.js"));
   await mkdir(agentDir, { recursive: true, mode: 0o700 });
-  const backup = original === undefined ? undefined : `${target}.bak-fuyao-pi-${randomUUID()}`;
+  await mkdir(resolve(acpPath, ".."), { recursive: true, mode: 0o700 });
+  const backup = settingsChanged && original !== undefined ? `${target}.bak-fuyao-pi-${randomUUID()}` : undefined;
+  const acpBackup = acpChanged && originalAcp !== undefined ? `${acpPath}.bak-fuyao-pi-${randomUUID()}` : undefined;
   if (backup) await writeFile(backup, original!, { mode: 0o600, flag: "wx" });
-  const temporary = `${target}.tmp-${randomUUID()}`;
-  await writeFile(temporary, JSON.stringify(next, null, 2) + "\n", { mode: 0o600, flag: "wx" });
-  await rename(temporary, target);
-  await chmod(target, 0o600);
-  console.log(backup ? `Backup: ${backup}` : "Created settings.json");
-  console.log("Settings configured; dependencies have NOT been downloaded. Run pi update --extensions, then restart Pi with ACP_AUTO_UPDATE=0.");
-  return { changed, backup };
+  if (acpBackup) await writeFile(acpBackup, originalAcp!, { mode: 0o600, flag: "wx" });
+  if (settingsChanged) {
+    const temporary = `${target}.tmp-${randomUUID()}`;
+    await writeFile(temporary, JSON.stringify(next, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    await rename(temporary, target);
+    await chmod(target, 0o600);
+  }
+  if (acpChanged) {
+    const temporary = `${acpPath}.tmp-${randomUUID()}`;
+    await writeFile(temporary, JSON.stringify(nextAcp, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    await rename(temporary, acpPath);
+    await chmod(acpPath, 0o600);
+  }
+  console.log(backup ? `Backup: ${backup}` : settingsChanged ? "Created settings.json" : "Settings already configured");
+  console.log(acpBackup ? `ACP backup: ${acpBackup}` : acpChanged ? `Created ${acpPath}` : "ACP auto-update already disabled");
+  console.log("Settings configured; dependencies have NOT been downloaded. Run pi update --extensions, then restart Pi.");
+  return { changed, backup, acpBackup };
 }
 
 if (import.meta.main) {

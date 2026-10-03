@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { localPlugins, mergeProfile, packageIdentity, rebaseFilters, setup } from "../scripts/setup.ts";
 
-const sources = ["npm:billion-context-pi@0.1.82", "npm:@juicesharp/rpiv-todo@2.11.0"];
+const sources = ["npm:billion-context-pi@0.1.83", "npm:@juicesharp/rpiv-todo@2.11.0"];
 const upstreamUi = [
   "git:github.com/beautifulrem/pi-sakura-cyberdeck",
   "git:https://github.com/beautifulrem/pi-sakura-cyberdeck.git@abc",
@@ -145,20 +145,26 @@ describe("personal Pi profile", () => {
       await writeFile(join(repo, "packages/remote-ssh/dist/pi-extension.js"), "");
       await writeFile(join(repo, "config/settings.json"), '{"theme":"sakura-macaron"}');
       await writeFile(join(repo, "config/plugins.json"), JSON.stringify({ packages: sources }));
-      await setup(agent, false, repo);
+      const acp = join(tmp, "home", ".pi", "acp.json");
+      await setup(agent, false, repo, acp);
       expect((await readdir(tmp)).sort()).toEqual(["repo"]);
       await mkdir(agent);
+      await mkdir(join(tmp, "home", ".pi"), { recursive: true });
+      await writeFile(acp, '{"debug":true,"autoUpdate":true}\n');
       const original = '{"defaultModel":"private-model","customSecret":"do-not-export"}\n';
       await writeFile(join(agent, "settings.json"), original);
       await writeFile(join(agent, "auth.json"), "untouched");
-      const result = await setup(agent, true, repo);
+      const result = await setup(agent, true, repo, acp);
       expect(await readFile(result.backup!, "utf8")).toBe(original);
+      expect(await readFile(result.acpBackup!, "utf8")).toBe('{"debug":true,"autoUpdate":true}\n');
       expect((await stat(result.backup!)).mode & 0o777).toBe(0o600);
+      expect((await stat(result.acpBackup!)).mode & 0o777).toBe(0o600);
       expect((await stat(join(agent, "settings.json"))).mode & 0o777).toBe(0o600);
       const written = JSON.parse(await readFile(join(agent, "settings.json"), "utf8"));
       expect(written.customSecret).toBe("do-not-export");
+      expect(JSON.parse(await readFile(acp, "utf8"))).toEqual({ debug: true, autoUpdate: false });
       expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("untouched");
-      expect((await setup(agent, true, repo)).changed).toBe(false);
+      expect((await setup(agent, true, repo, acp)).changed).toBe(false);
       expect((await readdir(agent)).length).toBe(3);
     } finally { await rm(tmp, { recursive: true, force: true }); }
   });

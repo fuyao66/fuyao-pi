@@ -59,14 +59,15 @@ For documentation-only changes, check links, paths and example commands.
 - Keep the installed Pi CLI consistent with root Pi dependencies and
   `config/plugins.json`'s `piVersion`; inspect child peer constraints and any fixed
   handshake/worker runtime expectations too. `setup` does not enforce the CLI version.
-- BCP has both a runtime profile pin and a development dependency used in compatibility
-  tests. Update deliberately, keep `ACP_AUTO_UPDATE=0` for pinned-stack validation,
-  and revalidate Advisor's event ordering, Memory's sidecar parsing and remote delegation.
+- Community packages are pinned in `config/plugins.json`; update them as one reviewed
+  profile. BCP's official `autoUpdate` setting is disabled by `bun run setup --apply`;
+  use `ACP_AUTO_UPDATE=0` only as a temporary diagnostic override.
 - A companion update changes `config/plugins.json`. Preview `bun run setup`, then apply
   and run `pi update --extensions` using the correct agent directory. Audit third-party
   executable/install behavior; a version pin is not a security review.
-- Local source derivatives are merged manually. `pi update` is not an upstream-merge
-  mechanism for code under `packages/`.
+- Local source derivatives are the second locked class: checked-in source and Git commit
+  are authoritative, while `UPSTREAM.md` records imported source and local differences.
+  `pi update` is not an upstream-merge mechanism for code under `packages/`.
 - Rebuild generated artifacts after relevant runtime changes. Keep `bun.lock` committed;
   never commit `node_modules`, worker binaries or local databases.
 
