@@ -101,8 +101,11 @@ test("skipped reload cannot report local mode and explicit exit can recover", as
 test("model exit returns before idle and blocks workspace calls until restoration", async () => {
   const f = await fixture();
   try {
-    const result = await f.session.getToolDefinition("remote_exit")!.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    const exitTool = f.session.getToolDefinition("remote_exit")!;
+    const result = await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
     expect(result.details).toMatchObject({ queued: true });
+    const duplicate = await exitTool.execute("duplicate", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    expect(duplicate.details).toMatchObject({ queued: false });
     const gate = await f.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "bash", toolCallId: "blocked", input: { command: "touch forbidden" } });
     expect(gate?.block).toBe(true);
     f.idle();

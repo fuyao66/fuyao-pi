@@ -12,6 +12,7 @@ export class PiWorkspaceBinding {
   #generation = 0;
   #scope?: PiRemoteWorkspaceScope;
   #error?: Error;
+  #closePromise?: Promise<void>;
   readonly #participants = new Set<WorkspaceParticipant>();
 
   get phase(): WorkspacePhase { return this.#phase; }
@@ -57,6 +58,15 @@ export class PiWorkspaceBinding {
   }
 
   async close(force = false): Promise<void> {
+    if (this.#phase === "local") return;
+    if (this.#closePromise) return this.#closePromise;
+    this.#closePromise = this.#closeOnce(force).finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
+  }
+
+  async #closeOnce(force: boolean): Promise<void> {
     this.#phase = "closing";
     ++this.#generation;
     try {

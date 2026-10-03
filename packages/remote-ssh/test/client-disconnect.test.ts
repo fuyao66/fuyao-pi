@@ -58,4 +58,24 @@ describe("remote runtime disconnects", () => {
     );
     expect(client.isClosed).toBe(true);
   });
+
+  test("makes repeated graceful closes single-flight after stdin has ended", async () => {
+    const client = new RemoteRuntimeClient({
+      command: ["bun", "-e", `
+        const { createInterface } = require("node:readline");
+        const { encodeMessage, PROTOCOL_VERSION } = await import(${JSON.stringify(join(import.meta.dir, "../src/protocol.ts"))});
+        for await (const line of createInterface({ input: process.stdin })) {
+          const request = JSON.parse(line);
+          if (request.type === "initialize") process.stdout.write(encodeMessage({
+            type: "ready", protocolVersion: PROTOCOL_VERSION, host: "pi",
+            hostVersion: "test", runtimeVersion: "fixture", tools: []
+          }));
+          if (request.type === "shutdown") process.exit(0);
+        }
+      `],
+    });
+    await client.initialize("/remote/workspace", handshake);
+    await Promise.all([client.close(), client.close(), client.close()]);
+    expect(client.isClosed).toBe(true);
+  });
 });

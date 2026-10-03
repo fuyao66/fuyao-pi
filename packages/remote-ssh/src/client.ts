@@ -46,6 +46,7 @@ export class RemoteRuntimeClient {
   #resolveReady?: (message: ReadyMessage) => void;
   #rejectReady?: (error: Error) => void;
   #closed = false;
+  #closePromise?: Promise<void>;
   #nextId = 1;
   readonly #exitPromise: Promise<number | null>;
   readonly #eventListeners = new Set<(event: EventMessage) => void | Promise<void>>();
@@ -170,6 +171,12 @@ export class RemoteRuntimeClient {
 
   async close(timeoutMs = 10_000): Promise<void> {
     if (this.#closed) return;
+    if (this.#closePromise) return this.#closePromise;
+    this.#closePromise = this.#closeOnce(timeoutMs);
+    return this.#closePromise;
+  }
+
+  async #closeOnce(timeoutMs: number): Promise<void> {
     try {
       this.#send({ type: "shutdown" });
       this.#process.stdin?.end();
@@ -192,7 +199,11 @@ export class RemoteRuntimeClient {
 
   #send(message: Request): void {
     if (this.#closed) throw new Error("Remote runtime is disconnected");
-    this.#process.stdin?.write(encodeMessage(message));
+    const stdin = this.#process.stdin;
+    if (!stdin || stdin.destroyed || stdin.writableEnded) {
+      throw new Error("Remote runtime input is closed");
+    }
+    stdin.write(encodeMessage(message));
   }
 
   async #readStdout(): Promise<void> {

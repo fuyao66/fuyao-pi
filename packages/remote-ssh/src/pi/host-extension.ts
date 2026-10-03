@@ -33,7 +33,11 @@ import { BcpLocalArtifacts, guardDelegateCwd } from "./integrations/bcp-local.ts
 import { publishSessionContext, restoreSessionContext, releaseSessionContext } from "./session-context.ts";
 const STATE_KEY = Symbol.for("pi-ssh-remote/state");
 
-type PendingReload = { restored: boolean };
+type PendingReload = {
+  restored: boolean;
+  commandScheduled?: boolean;
+  commandRunning?: boolean;
+};
 
 export function filterStaleRemoteWrappers(
   tools: readonly ToolInfo[],
@@ -638,7 +642,14 @@ export async function installPiRemoteExtension(
         typeof params === "object" &&
         (params as Record<string, unknown>).force === true;
       const command = force ? "/remote-exit --force" : "/remote-exit";
-      beginPendingReload(state);
+      const pending = beginPendingReload(state);
+      if (pending.commandScheduled || pending.commandRunning) {
+        return {
+          content: [{ type: "text", text: "Remote exit is already pending." }],
+          details: { queued: false, command },
+        } as never;
+      }
+      pending.commandScheduled = true;
       setImmediate(() => {
         pi.sendUserMessage(command, {
           deliverAs: "steer",
@@ -687,6 +698,12 @@ export async function installPiRemoteExtension(
         return;
       }
       const pendingReload = beginPendingReload(state);
+      if (!pendingReload.commandScheduled && pendingReload.commandRunning) {
+        ctx.ui?.notify?.("Remote exit is already in progress.", "warning");
+        return;
+      }
+      pendingReload.commandScheduled = false;
+      pendingReload.commandRunning = true;
       try {
         await ctx.waitForIdle();
         const inheritedChild = state.isInheritedChild;
@@ -714,11 +731,22 @@ export async function installPiRemoteExtension(
         return;
       } catch (error) {
         finishPendingReload(state, error);
-        state.selected = true;
-        binding.fail(error);
-        state.ownershipVerified = false;
-        state.connectionError =
-          error instanceof Error ? error.message : String(error);
+        if (binding.selected || !pendingReload.restored) {
+          state.selected = true;
+          binding.fail(error);
+          state.ownershipVerified = false;
+          state.connectionError =
+            error instanceof Error ? error.message : String(error);
+        } else {
+          state.selected = false;
+          state.scope = undefined;
+          state.ready = undefined;
+          state.assembly = undefined;
+          state.cwd = undefined;
+          state.connectOptions = undefined;
+          state.connectionError = undefined;
+          state.ownershipVerified = undefined;
+        }
         throw error;
       }
     },
