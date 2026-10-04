@@ -32,6 +32,34 @@ describe("remote runtime disconnects", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  test("keeps the client connected after a command exits with 141", async () => {
+    const client = new RemoteRuntimeClient({
+      command: ["bun", "-e", `
+        const { createInterface } = require("node:readline");
+        const { encodeMessage, PROTOCOL_VERSION } = await import(${JSON.stringify(join(import.meta.dir, "../src/protocol.ts"))});
+        let calls = 0;
+        for await (const line of createInterface({ input: process.stdin })) {
+          const request = JSON.parse(line);
+          if (request.type === "initialize") process.stdout.write(encodeMessage({
+            type: "ready", protocolVersion: PROTOCOL_VERSION, host: "pi",
+            hostVersion: "test", runtimeVersion: "fixture", tools: [{ name: "read", description: "fixture" }]
+          }));
+          if (request.type === "execute") {
+            calls++;
+            if (calls === 1) process.stdout.write(encodeMessage({ type: "error", id: request.id, error: { name: "Error", message: "Command exited with code 141" } }));
+            else process.stdout.write(encodeMessage({ type: "result", id: request.id, result: { content: [{ type: "text", text: "still connected" }], details: {} } }));
+          }
+        }
+      `],
+    });
+    try {
+      await client.initialize("/remote/workspace", handshake);
+      await expect(client.execute("read", "sigpipe", { path: "ignored" })).rejects.toThrow("Command exited with code 141");
+      await expect(client.execute("read", "after-sigpipe", { path: "ignored" })).resolves.toMatchObject({ content: [{ text: "still connected" }] });
+      expect(client.isClosed).toBe(false);
+    } finally { await client.close().catch(() => client.kill()); }
+  });
+
   test("rejects a pending tool call without local fallback", async () => {
     const client = new RemoteRuntimeClient({
       command: ["bun", join(import.meta.dir, "fixtures/hanging-worker.ts")],

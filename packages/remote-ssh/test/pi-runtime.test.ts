@@ -27,6 +27,8 @@ describe("fixed Pi core worker", () => {
       expect(await readFile(join(cwd, "base.txt"), "utf8")).toBe("after\n");
       expect(JSON.stringify(await execute("read", { path: "base.txt" }))).toContain("after");
       expect(JSON.stringify(await execute("bash", { command: "pwd" }))).toContain(cwd);
+      await expect(execute("bash", { command: "set -o pipefail; yes | head -n 1 >/dev/null" })).rejects.toThrow("Command exited with code 141");
+      expect(JSON.stringify(await execute("bash", { command: "pwd" }))).toContain(cwd);
       expect(JSON.stringify(await execute("ls", { path: "." }))).toContain("base.txt");
       await expect(execute("acp_delegate", {})).rejects.toThrow("not admitted");
       const controller = new AbortController();

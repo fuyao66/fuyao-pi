@@ -32,11 +32,14 @@ import { workspaceBinding } from "./workspace-binding.ts";
 import { BcpLocalArtifacts, guardDelegateCwd } from "./integrations/bcp-local.ts";
 import { publishSessionContext, restoreSessionContext, releaseSessionContext } from "./session-context.ts";
 const STATE_KEY = Symbol.for("pi-ssh-remote/state");
+const PENDING_RELOAD_TIMEOUT_MS = 60_000;
 
 type PendingReload = {
   restored: boolean;
+  requestId?: string;
   commandScheduled?: boolean;
   commandRunning?: boolean;
+  watchdog?: ReturnType<typeof setTimeout>;
 };
 
 export function filterStaleRemoteWrappers(
@@ -133,6 +136,13 @@ function beginPendingReload(state: PiRemoteExtensionState): PendingReload {
   return pending;
 }
 
+function clearPendingReloadWatchdog(pending: PendingReload): void {
+  if (pending.watchdog) {
+    clearTimeout(pending.watchdog);
+    pending.watchdog = undefined;
+  }
+}
+
 function finishPendingReload(
   state: PiRemoteExtensionState,
   error?: unknown,
@@ -140,6 +150,7 @@ function finishPendingReload(
   const pending = state.pendingReload;
   if (!pending) return;
   state.pendingReload = undefined;
+  clearPendingReloadWatchdog(pending);
   pending.restored = error === undefined;
 }
 
@@ -292,7 +303,7 @@ function manifestSchema(tool: ToolManifest): TSchema {
 
 export async function installPiRemoteExtension(
   pi: ExtensionAPI,
-  options: { inheritedChild?: boolean; inheritance?: PiRemoteConnectionInheritance; extensionPath?: string } = {},
+  options: { inheritedChild?: boolean; inheritance?: PiRemoteConnectionInheritance; extensionPath?: string; exitTimeoutMs?: number } = {},
 ): Promise<void> {
   let sessionKey: object = pi.events ?? globalScope;
   let state = getPiRemoteStateForSession(sessionKey);
@@ -481,6 +492,12 @@ export async function installPiRemoteExtension(
       });
       state.scope = openedScope;
       state.ready = openedScope.ready;
+      openedScope.onClose((error) => {
+        if (state.scope !== openedScope || !state.selected || binding.phase === "closing") return;
+        state.ownershipVerified = false;
+        state.connectionError = error.message;
+        binding.fail(error);
+      });
       registerRemoteWrappers(openedScope.ready, assembly);
       if (!state.isInheritedChild) verifyOwnership();
       binding.commit(openedScope, generation);
@@ -649,17 +666,41 @@ export async function installPiRemoteExtension(
           details: { queued: false, command },
         } as never;
       }
+      pending.requestId = randomUUID();
+      const dispatchCommand = `${command} --request=${pending.requestId}`;
       pending.commandScheduled = true;
+      pending.watchdog = setTimeout(() => {
+        if (state.pendingReload !== pending || pending.commandRunning) return;
+        finishPendingReload(
+          state,
+          new Error("Remote exit was not accepted by the current Pi turn"),
+        );
+      }, options.exitTimeoutMs ?? PENDING_RELOAD_TIMEOUT_MS);
+      pending.watchdog.unref?.();
       setImmediate(() => {
-        pi.sendUserMessage(command, {
-          deliverAs: "steer",
-          expandPromptTemplates: true,
-        });
+        if (state.pendingReload !== pending) return;
+        try {
+          // This must be delivered after the tool result: Pi cannot reload its
+          // extension runner while this tool handler is still active.
+          void Promise.resolve(pi.sendUserMessage(dispatchCommand, {
+            deliverAs: "steer",
+            expandPromptTemplates: true,
+          })).catch((error) => {
+            if (state.pendingReload === pending) {
+              finishPendingReload(state, error);
+            }
+          });
+        } catch (error) {
+          if (state.pendingReload === pending) {
+            finishPendingReload(state, error);
+          }
+        }
       });
       // The command waits for idle; this tool must finish before that can happen.
       return {
         content: [{ type: "text", text: `Queued ${command}; local tools are restored after the current response finishes.` }],
         details: { queued: true, command },
+        terminate: true,
       } as never;
     },
   });
@@ -691,21 +732,41 @@ export async function installPiRemoteExtension(
       args: string,
       ctx: ExtensionCommandContext,
     ): Promise<void> => {
-      const force = args.trim() === "--force";
+      const flags = args.trim().split(/\s+/);
+      const force = flags.includes("--force");
+      const requestId = flags.find((flag) => flag.startsWith("--request="))?.slice("--request=".length);
+      // A delayed command from a timed-out request must not close a new connection.
+      if (requestId && state.pendingReload?.requestId !== requestId) return;
+      if (!requestId && state.pendingReload?.commandScheduled) {
+        ctx.ui?.notify?.("Remote exit is already pending.", "warning");
+        return;
+      }
       if (!state.selected && !state.scope) {
         ctx.ui?.notify?.("Not connected to a remote runtime.", "warning");
         finishPendingReload(state);
         return;
       }
       const pendingReload = beginPendingReload(state);
-      if (!pendingReload.commandScheduled && pendingReload.commandRunning) {
+      if (pendingReload.commandRunning) {
         ctx.ui?.notify?.("Remote exit is already in progress.", "warning");
         return;
       }
       pendingReload.commandScheduled = false;
       pendingReload.commandRunning = true;
+      clearPendingReloadWatchdog(pendingReload);
       try {
-        await ctx.waitForIdle();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            ctx.waitForIdle(),
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error("Remote exit timed out waiting for Pi to become idle; retry /remote-exit after stopping the current response")), options.exitTimeoutMs ?? PENDING_RELOAD_TIMEOUT_MS);
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        if (state.pendingReload !== pendingReload) return;
         const inheritedChild = state.isInheritedChild;
         await binding.close(force);
         state.selected = false;
@@ -869,7 +930,14 @@ export async function installPiRemoteExtension(
     if (!state.selected && state.pendingReload) {
       const allTools = pi.getAllTools();
       if (filterStaleRemoteWrappers(allTools).length !== allTools.length) {
-        throw new Error("Pi reload retained remote workspace tools; local restoration was not completed");
+        const error = new Error("Pi reload retained remote workspace tools; local restoration was not completed");
+        // Do not leave reconnect blocked forever when reload fails partway through.
+        finishPendingReload(state, error);
+        state.selected = true;
+        state.ownershipVerified = false;
+        state.connectionError = error.message;
+        binding.fail(error);
+        throw error;
       }
       finishPendingReload(state);
     }
@@ -888,6 +956,7 @@ export async function installPiRemoteExtension(
   pi.on("session_shutdown", async (event, ctx) => {
     if (event.reason === "reload") return;
     if (ctx) releaseSessionContext(ctx);
+    finishPendingReload(state, new Error("Pi session shut down before remote exit completed"));
     const inheritedChild = state.isInheritedChild;
     try {
       await binding.close(true);

@@ -62,6 +62,10 @@ export class PiRemoteWorkspaceScope {
     return this.client.isClosed;
   }
 
+  onClose(listener: (error: Error) => void): () => void {
+    return this.client.onClose(listener);
+  }
+
   execute(
     tool: string,
     toolCallId: string,

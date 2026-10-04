@@ -8,12 +8,12 @@ import { getPiRemoteStateForSession, installPiRemoteExtension } from "../src/pi/
 import { resolvePiRuntimeAssembly } from "../src/pi/assembly.ts";
 import { workspaceBinding } from "../src/pi/workspace-binding.ts";
 
-async function fixture() {
+async function fixture(options: { exitTimeoutMs?: number; dispatch?: (command: string) => void | Promise<void> } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "pi-exit-lifecycle-"));
   const definition = createBashToolDefinition(cwd);
   const assembly = await resolvePiRuntimeAssembly({ tools: [{ ...definition, sourceInfo: { source: "builtin", path: "<builtin:bash>", scope: "temporary", origin: "top-level" } }], hostVersion: "0.85.1" });
   let initialized = false;
-  let remoteState: ReturnType<typeof getPiRemoteStateForSession>;
+  let remoteState!: ReturnType<typeof getPiRemoteStateForSession>;
   let closed = false;
   let addLocalCompanions = false;
   const settingsManager = SettingsManager.inMemory({});
@@ -30,7 +30,8 @@ async function fixture() {
         remoteState = getPiRemoteStateForSession(pi.events);
         Object.assign(remoteState, { selected: true, ownershipVerified: true, scope, assembly, cwd, ready: { tools: assembly.tools } });
       }
-      await installPiRemoteExtension(pi);
+      if (options.dispatch) pi.sendUserMessage = options.dispatch;
+      await installPiRemoteExtension(pi, options);
     }],
   });
   await resourceLoader.reload();
@@ -44,7 +45,7 @@ async function fixture() {
     // The interactive host returns without reloading when busy; void is not an acknowledgement.
     reload: async () => { if (!busy && !skipReload) await session.reload(); },
   } });
-  return { session, async addCompanions() {
+  return { session, remoteState, async addCompanions() {
     remoteState.localActiveTools = session.getActiveToolNames();
     addLocalCompanions = true;
     await session.reload();
@@ -104,6 +105,7 @@ test("model exit returns before idle and blocks workspace calls until restoratio
     const exitTool = f.session.getToolDefinition("remote_exit")!;
     const result = await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
     expect(result.details).toMatchObject({ queued: true });
+    expect(result.terminate).toBe(true);
     const duplicate = await exitTool.execute("duplicate", {}, undefined, undefined, f.session.extensionRunner.createContext());
     expect(duplicate.details).toMatchObject({ queued: false });
     const gate = await f.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "bash", toolCallId: "blocked", input: { command: "touch forbidden" } });
@@ -112,6 +114,53 @@ test("model exit returns before idle and blocks workspace calls until restoratio
     for (let n = 0; n < 100 && f.session.getToolDefinition("bash")!.description.startsWith("[Remote"); n++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
+    expect(await bash(f.session)).toBe("LOCAL_AFTER_EXIT");
+  } finally { f.idle(); await f.dispose(); }
+});
+
+test("releases a pending exit when asynchronous command dispatch rejects", async () => {
+  const f = await fixture({ dispatch: async () => { throw new Error("dispatch failed"); } });
+  try {
+    await f.session.getToolDefinition("remote_exit")!.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.remoteState.pendingReload).toBeUndefined();
+    expect(f.closed).toBe(false);
+    f.idle();
+    await f.session.prompt("/remote-exit");
+    expect(await bash(f.session)).toBe("LOCAL_AFTER_EXIT");
+  } finally { f.idle(); await f.dispose(); }
+});
+
+test("expired queued exit cannot close a workspace when delivered late", async () => {
+  let command = "";
+  const f = await fixture({ exitTimeoutMs: 20, dispatch: (value) => { command = value; } });
+  try {
+    const exitTool = f.session.getToolDefinition("remote_exit")!;
+    await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(command).toContain("--request=");
+    expect(f.remoteState.pendingReload).toBeUndefined();
+    f.idle();
+    await f.session.prompt(command);
+    expect(f.closed).toBe(false);
+    expect(await bash(f.session)).toBe("REMOTE");
+    // A newer request remains intact when the old command arrives again.
+    await exitTool.execute("retry", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    const pending = f.remoteState.pendingReload;
+    await f.session.prompt(command);
+    expect(f.remoteState.pendingReload).toBe(pending);
+    expect(f.closed).toBe(false);
+  } finally { f.idle(); await f.dispose(); }
+});
+
+test("releases a pending exit after the idle wait times out", async () => {
+  const f = await fixture({ exitTimeoutMs: 20 });
+  try {
+    await f.session.prompt("/remote-exit");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(f.remoteState.pendingReload).toBeUndefined();
+    f.idle();
+    await f.session.prompt("/remote-exit");
     expect(await bash(f.session)).toBe("LOCAL_AFTER_EXIT");
   } finally { f.idle(); await f.dispose(); }
 });
