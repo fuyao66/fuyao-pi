@@ -10,6 +10,7 @@ export interface OpenPiRemoteScopeOptions {
   workerPath: string;
   cwd: string;
   initializeTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export class PiRemoteWorkspaceScope {
@@ -36,6 +37,7 @@ export class PiRemoteWorkspaceScope {
   static async open(
     options: OpenPiRemoteScopeOptions,
   ): Promise<PiRemoteWorkspaceScope> {
+    options.signal?.throwIfAborted();
     const client = new RemoteRuntimeClient({
       command: buildSshWorkerCommand({
         target: options.connectOptions.target,
@@ -45,16 +47,22 @@ export class PiRemoteWorkspaceScope {
         workerPath: options.workerPath,
       }),
     });
+    const abort = () => { void client.kill(); };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
     try {
       const ready = await client.initialize(
         options.cwd,
         options.assembly.handshake,
         options.initializeTimeoutMs ?? 30_000,
       );
+      options.signal?.throwIfAborted();
       return new PiRemoteWorkspaceScope(options, client, ready);
     } catch (error) {
-      if (!client.isClosed) client.kill();
+      await client.kill();
       throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
     }
   }
 
@@ -99,12 +107,12 @@ export class PiRemoteWorkspaceScope {
   }
 
   async close(force = false): Promise<void> {
-    if (this.client.isClosed) return;
+    if (this.client.isClosed) { await this.client.close(); return; }
     try {
       await this.client.close();
     } catch (error) {
       if (!force) throw error;
-      this.client.kill();
+      await this.client.kill();
     }
   }
 }

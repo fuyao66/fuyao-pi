@@ -34,11 +34,17 @@ export class PiWorkspaceBinding {
     const generation = ++this.#generation;
     try {
       await Promise.all([...this.#participants].map((participant) => participant.suspend()));
+      if (generation !== this.#generation || this.#phase !== "connecting") {
+        throw new Error("Workspace preparation belongs to an obsolete transition");
+      }
       await this.#scope?.close();
+      if (generation !== this.#generation || this.#phase !== "connecting") {
+        throw new Error("Workspace preparation belongs to an obsolete transition");
+      }
       this.#scope = undefined;
       return generation;
     } catch (error) {
-      this.fail(error);
+      if (generation === this.#generation) this.fail(error);
       throw error;
     }
   }

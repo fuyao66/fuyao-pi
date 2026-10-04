@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SUPPORTED_PLATFORMS, prepareRemoteWorker } from "../src/deploy.ts";
-import { rm, readlink, writeFile, readFile, chmod } from "node:fs/promises";
+import { rm, readlink, writeFile, readFile, chmod, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { deploymentFixture } from "./fixtures/deployment.ts";
 
@@ -57,8 +57,32 @@ describe("remote bundle deployment", () => {
       await writeFile(join(f.artifacts, "worker-linux-x64"), "corrupt-upload");
       await expect(prepareRemoteWorker(f.options, f.bundle)).rejects.toThrow("Worker activation failed");
       await expect(readFile(join(f.workerDir, "worker-linux-x64"))).rejects.toThrow();
+      expect((await readdir(f.workerDir)).filter((name) => name.includes(".upload-"))).toEqual([]);
     } finally { await f.close(); }
   });
+});
+
+test("deployment abort promptly terminates the current SSH probe", async () => {
+  const f = await deploymentFixture("30");
+  const controller = new AbortController();
+  try {
+    const pending = prepareRemoteWorker({ ...f.options, signal: controller.signal }, f.bundle);
+    const failure = pending.catch((error: unknown) => error);
+    setTimeout(() => controller.abort(new Error("cancel deployment")), 25);
+    expect(String(await failure)).toContain("cancel deployment");
+    const commands = await f.commands();
+    expect(commands).toEqual(["ssh"]);
+  } finally { await f.close(); }
+}, 5_000);
+
+test("failed companion hash validation removes temporary uploads", async () => {
+  const f = await deploymentFixture();
+  try {
+    await rm(f.companionDir, { recursive: true });
+    await writeFile(join(f.artifacts, "photon-x64"), "corrupt-companion");
+    await expect(prepareRemoteWorker(f.options, f.bundle)).rejects.toThrow("activation failed");
+    expect((await readdir(f.companionDir)).filter((name) => name.includes(".upload-"))).toEqual([]);
+  } finally { await f.close(); }
 });
 
 describe("remote worker platform mapping", () => {

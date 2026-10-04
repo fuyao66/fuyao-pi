@@ -16,6 +16,7 @@ import {
 } from "./protocol.ts";
 import { delimiter, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MAX_ACTIVE_REMOTE_EXECUTIONS, MAX_QUEUED_PROTOCOL_BYTES } from "./process-lifecycle.ts";
 
 const workerDir =
   process.env.PI_COMPILED === "true"
@@ -54,7 +55,15 @@ async function cleanupWorker(reason: Error): Promise<void> {
 }
 
 function send(message: Message): void {
-  process.stdout.write(encodeMessage(message));
+  if (shuttingDown) return;
+  try {
+    const frame = encodeMessage(message);
+    if (process.stdout.writableLength + Buffer.byteLength(frame) > MAX_QUEUED_PROTOCOL_BYTES) {
+      stopForSignal("output queue overflow");
+      return;
+    }
+    process.stdout.write(frame, (error) => { if (error) stopForSignal("stdout failure"); });
+  } catch { stopForSignal("protocol output failure"); }
 }
 
 function serializeError(error: unknown): {
@@ -106,6 +115,7 @@ async function initialize(request: InitializeRequest): Promise<void> {
 }
 
 function startExecute(request: ExecuteRequest): void {
+  if (shuttingDown) return;
   if (!runtime) {
     send({
       type: "error",
@@ -117,8 +127,21 @@ function startExecute(request: ExecuteRequest): void {
     });
     return;
   }
+  if (active.has(request.id)) {
+    // An id identifies one terminal response; an id-scoped rejection would be
+    // indistinguishable from completion of the original request. Fail transport.
+    send({ type: "error", error: { name: "DuplicateRequest", message: `Duplicate active execution id: ${request.id}` } });
+    stopForSignal("duplicate execution id");
+    return;
+  }
+  if (active.size >= MAX_ACTIVE_REMOTE_EXECUTIONS) {
+    send({ type: "error", id: request.id, error: { name: "Busy", message: "Worker execution limit reached" } });
+    return;
+  }
   const controller = new AbortController();
-  const executePromise = (async () => {
+  const entry = { controller, done: Promise.resolve() };
+  active.set(request.id, entry);
+  entry.done = (async () => {
     try {
       const result = await runtime.execute(
         request,
@@ -133,13 +156,13 @@ function startExecute(request: ExecuteRequest): void {
       if (!shuttingDown)
         send({ type: "error", id: request.id, error: serializeError(error) });
     } finally {
-      active.delete(request.id);
+      if (active.get(request.id) === entry) active.delete(request.id);
     }
   })();
-  active.set(request.id, { controller, done: executePromise });
 }
 
 async function dispatch(request: Request): Promise<boolean> {
+  if (shuttingDown) return false;
   if (request.type === "initialize") {
     await initialize(request);
     return true;
@@ -163,10 +186,12 @@ async function dispatch(request: Request): Promise<boolean> {
 }
 
 const stopForSignal = (signal: string): void => {
+  if (shuttingDown) return;
   void cleanupWorker(new Error(`Remote worker received ${signal}`)).finally(
     () => process.exit(0),
   );
 };
+process.stdout.on("error", () => stopForSignal("stdout failure"));
 process.once("SIGHUP", () => stopForSignal("SIGHUP"));
 process.once("SIGTERM", () => stopForSignal("SIGTERM"));
 

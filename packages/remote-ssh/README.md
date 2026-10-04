@@ -54,6 +54,14 @@ Do not enable the old AFT/FFF/RTK/Tintin managed entries. They and the plugin-se
 
 Connection measurements and benchmark instructions: [Performance](docs/performance.md).
 
+## Failure and resource limits
+
+- Connection preparation reserves the remote execution domain before any SSH work. Workspace tools and local `!`/`!!` are blocked while connecting; failed or cancelled preparation stays fail-closed until `/remote-exit`. A second connection or exit during preparation is rejected. Stop/cancel the current connect first.
+- Worker process errors, broken input pipes and unexpected protocol stdout EOF close the transport and reject pending calls. Cancellation waits up to 5 seconds for a terminal response, then closes the entire connection (including sibling calls). No command is retried automatically: a rejected call may already have performed remote writes.
+- Transport cleanup escalates from SIGTERM to SIGKILL after 250 ms and bounds pipe cleanup. This reaps the local SSH process; it cannot guarantee termination of detached remote grandchildren or background jobs.
+- The worker admits at most 32 simultaneous executions. Duplicate active request IDs fail the transport. Protocol frames are limited to 16 MiB, and buffered protocol output/input to 32 MiB; excess traffic closes the connection instead of growing memory without bound.
+- Uploads use `scp -O` (legacy SCP) so shell-quoted remote paths work consistently with modern OpenSSH. The remote server must allow legacy SCP. Failed uploads get bounded best-effort temporary-file cleanup; a network outage can still leave temporary files on the server.
+
 ## Usage
 
 ```text

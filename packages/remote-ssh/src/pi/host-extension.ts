@@ -92,6 +92,7 @@ export interface PiRemoteWorkspaceStatus {
 
 export interface PiRemoteExtensionState {
   selected: boolean;
+  connecting?: AbortController;
   scope?: PiRemoteWorkspaceScope;
   assembly?: PiRuntimeAssembly;
   cwd?: string;
@@ -458,6 +459,8 @@ export async function installPiRemoteExtension(
     parsed: RemoteConnectRequest,
     remoteCwd: string,
     remoteWorkerPath: string,
+    preparedGeneration?: number,
+    signal?: AbortSignal,
   ): Promise<ReadyMessage> => {
     if (state.scope && !state.scope.isClosed) {
       throw new Error(
@@ -482,14 +485,19 @@ export async function installPiRemoteExtension(
     state.localActiveTools ??= pi.getActiveTools();
 
     let openedScope: PiRemoteWorkspaceScope | undefined;
+    let generation = preparedGeneration;
     try {
-      const generation = await binding.begin();
+      generation ??= await binding.begin();
       openedScope = await PiRemoteWorkspaceScope.open({
         assembly,
         connectOptions: parsed,
         workerPath: remoteWorkerPath,
         cwd: remoteCwd,
+        signal,
       });
+      if (binding.generation !== generation || binding.phase !== "connecting") {
+        throw new Error("Remote connection attempt is obsolete");
+      }
       state.scope = openedScope;
       state.ready = openedScope.ready;
       openedScope.onClose((error) => {
@@ -513,15 +521,14 @@ export async function installPiRemoteExtension(
       }
       return openedScope.ready;
     } catch (error) {
-      binding.fail(error);
-      try {
-        await openedScope?.close(true);
-      } catch {}
-      state.ownershipVerified = false;
-      state.connectionError =
-        error instanceof Error ? error.message : String(error);
-      state.scope = undefined;
-      state.ready = undefined;
+      if (binding.generation === generation || (openedScope && state.scope === openedScope)) {
+        binding.fail(error);
+        state.ownershipVerified = false;
+        state.connectionError = error instanceof Error ? error.message : String(error);
+        state.scope = undefined;
+        state.ready = undefined;
+      }
+      try { await openedScope?.close(true); } catch {}
       throw error;
     }
   };
@@ -529,6 +536,7 @@ export async function installPiRemoteExtension(
   const connect = async (
     request: string | RemoteConnectRequest,
     localCwd: string,
+    signal?: AbortSignal,
   ): Promise<ReadyMessage> => {
     if (state.isInheritedChild) {
       throw new Error(
@@ -536,26 +544,45 @@ export async function installPiRemoteExtension(
       );
     }
     if (state.pendingReload) throw new Error("Remote exit is pending; reconnect after the current response finishes and local tools are restored.");
-    const assembly = await resolveCurrentAssembly();
-    const configuredHosts = await loadConfiguredSshHosts(localCwd);
-    const parsed =
-      typeof request === "string"
-        ? parseConnectArgs(request, configuredHosts)
-        : parseConnectArgs(
-            [
-              quoteCommandArgument(request.target),
-              ...(request.cwd ? [quoteCommandArgument(request.cwd)] : []),
-              ...(request.identityFile
-                ? ["--identity", quoteCommandArgument(request.identityFile)]
-                : []),
-              ...(request.port ? ["--port", String(request.port)] : []),
-            ].join(" "),
-            configuredHosts,
-          );
-    if (!state.isInheritedChild) {
-      inheritance?.claim(state.inheritanceOwnerToken!);
-    }
+    if (state.connecting) throw new Error("Remote connection is already in progress");
+    if (state.selected) throw new Error("Remote runtime is already selected. Run /remote-exit before reconnecting.");
+    // Reserve synchronously: Pi may start sibling tool calls before our first await.
+    signal?.throwIfAborted();
+    const attempt = new AbortController();
+    const abort = () => attempt.abort(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
+    state.connecting = attempt;
+    state.selected = true;
+    state.ownershipVerified = false;
+    state.localActiveTools ??= pi.getActiveTools();
+    const assertCurrent = () => {
+      attempt.signal.throwIfAborted();
+      if (state.connecting !== attempt || !state.selected) throw new Error("Remote connection attempt is obsolete");
+    };
     try {
+      const generation = await binding.begin();
+      assertCurrent();
+      const assembly = await resolveCurrentAssembly();
+      assertCurrent();
+      const configuredHosts = await loadConfiguredSshHosts(localCwd);
+      const parsed =
+        typeof request === "string"
+          ? parseConnectArgs(request, configuredHosts)
+          : parseConnectArgs(
+              [
+                quoteCommandArgument(request.target),
+                ...(request.cwd ? [quoteCommandArgument(request.cwd)] : []),
+                ...(request.identityFile
+                  ? ["--identity", quoteCommandArgument(request.identityFile)]
+                  : []),
+                ...(request.port ? ["--port", String(request.port)] : []),
+              ].join(" "),
+              configuredHosts,
+            );
+      assertCurrent();
+      if (!state.isInheritedChild) {
+        inheritance?.claim(state.inheritanceOwnerToken!);
+      }
       const prepared = await prepareRemoteWorker(
         {
           target: parsed.target,
@@ -563,9 +590,11 @@ export async function installPiRemoteExtension(
           identityFile: parsed.identityFile,
           knownHostsFile: parsed.knownHostsFile,
           localWorkerPath: parsed.workerPath,
+          signal: attempt.signal,
         },
         assembly.workerBundle,
       );
+      assertCurrent();
       const remoteCwd = parsed.cwd ?? prepared.home;
       if (!remoteCwd) throw new Error("Remote cwd and probed remote home are unavailable");
       return await connectPrepared(
@@ -573,12 +602,20 @@ export async function installPiRemoteExtension(
         parsed,
         remoteCwd,
         prepared.workerPath,
+        generation,
+        attempt.signal,
       );
     } catch (error) {
-      if (!state.selected) {
+      if (state.connecting === attempt) {
+        binding.fail(error);
+        state.ownershipVerified = false;
+        state.connectionError = error instanceof Error ? error.message : String(error);
         inheritance?.clear(state.inheritanceOwnerToken);
       }
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      if (state.connecting === attempt) state.connecting = undefined;
     }
   };
 
@@ -615,7 +652,7 @@ export async function installPiRemoteExtension(
     execute: async (
       _id: string,
       params: unknown,
-      _signal?: AbortSignal,
+      signal?: AbortSignal,
       _onUpdate?: AgentToolUpdateCallback<unknown>,
       ctx?: ExtensionContext,
     ) => {
@@ -636,6 +673,7 @@ export async function installPiRemoteExtension(
           ...(typeof args.port === "number" ? { port: args.port } : {}),
         },
         ctx?.cwd ?? process.cwd(),
+        signal,
       );
       const status = buildPiWorkspaceStatus(state);
       return {
@@ -654,6 +692,7 @@ export async function installPiRemoteExtension(
       force: Type.Optional(Type.Boolean()),
     }),
     execute: async (_id: string, params: unknown) => {
+      if (state.connecting) throw new Error("Remote connection is in progress; wait for it to finish before exiting");
       const force =
         !!params &&
         typeof params === "object" &&
@@ -732,6 +771,7 @@ export async function installPiRemoteExtension(
       args: string,
       ctx: ExtensionCommandContext,
     ): Promise<void> => {
+      if (state.connecting) throw new Error("Remote connection is in progress; wait for it to finish before exiting");
       const flags = args.trim().split(/\s+/);
       const force = flags.includes("--force");
       const requestId = flags.find((flag) => flag.startsWith("--request="))?.slice("--request=".length);
@@ -956,6 +996,9 @@ export async function installPiRemoteExtension(
   pi.on("session_shutdown", async (event, ctx) => {
     if (event.reason === "reload") return;
     if (ctx) releaseSessionContext(ctx);
+    const preparation = state.connecting;
+    state.connecting = undefined;
+    preparation?.abort(new Error("Remote connection attempt is obsolete: Pi session shut down"));
     finishPendingReload(state, new Error("Pi session shut down before remote exit completed"));
     const inheritedChild = state.isInheritedChild;
     try {

@@ -10,11 +10,13 @@ import {
   type Request,
 } from "./protocol.ts";
 import type { RemoteRuntimeHandshake } from "./runtime-contract.ts";
+import { MAX_ACTIVE_REMOTE_EXECUTIONS, MAX_QUEUED_PROTOCOL_BYTES, terminateProcess } from "./process-lifecycle.ts";
 
 export type SpawnSpec = {
   command: string[];
   cwd?: string;
   env?: Record<string, string>;
+  cancelTimeoutMs?: number;
 };
 
 type PendingCall = {
@@ -47,6 +49,9 @@ export class RemoteRuntimeClient {
   #rejectReady?: (error: Error) => void;
   #closed = false;
   #closePromise?: Promise<void>;
+  #terminationPromise?: Promise<void>;
+  #closing = false;
+  readonly #cancelTimeoutMs: number;
   #nextId = 1;
   readonly #exitPromise: Promise<number | null>;
   readonly #eventListeners = new Set<(event: EventMessage) => void | Promise<void>>();
@@ -71,6 +76,7 @@ export class RemoteRuntimeClient {
   }
 
   constructor(spec: SpawnSpec) {
+    this.#cancelTimeoutMs = spec.cancelTimeoutMs ?? 5_000;
     const [file, ...args] = spec.command;
     this.#process = spawn(file, args, {
       cwd: spec.cwd,
@@ -87,6 +93,10 @@ export class RemoteRuntimeClient {
     this.#exitPromise = new Promise<number | null>((resolve) => {
       this.#process.on("close", (code) => resolve(code));
     });
+    // EventEmitter error events are not caught by the stdout iterator or try/catch
+    // around write(): EPIPE/ENOENT must close the transport, not the Pi process.
+    this.#process.on("error", (error) => this.#terminate(error));
+    this.#process.stdin?.on("error", (error) => this.#terminate(error));
     void this.#readStdout().catch((error) => this.#terminate(error));
     void this.#readStderr().catch((error) => this.#terminate(error));
     void this.#watchExit();
@@ -98,7 +108,8 @@ export class RemoteRuntimeClient {
     timeoutMs = 15_000,
     options: { sessionId?: string } = {},
   ): Promise<ReadyMessage> {
-    this.#send({
+    try {
+      this.#send({
       type: "initialize",
       protocolVersion: PROTOCOL_VERSION,
       host: handshake.host,
@@ -108,8 +119,7 @@ export class RemoteRuntimeClient {
       tools: [...handshake.requestedTools],
       ...(handshake.assembly ? { assembly: handshake.assembly } : {}),
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
-    });
-    try {
+      });
       const ready = await withTimeout(
         this.#ready,
         timeoutMs,
@@ -136,20 +146,30 @@ export class RemoteRuntimeClient {
     onUpdate?: (update: unknown) => void,
     options: { toolNames?: readonly string[] } = {},
   ): Promise<unknown> {
-    if (this.#closed) throw new Error("Remote runtime is disconnected");
+    if (this.#closed || this.#closing) throw new Error("Remote runtime is disconnected");
     if (signal?.aborted) {
       const reason = signal.reason;
       throw reason instanceof Error ? reason : new Error("Operation aborted");
+    }
+    if (this.#pending.size >= MAX_ACTIVE_REMOTE_EXECUTIONS) {
+      throw new Error("Remote request limit reached");
     }
     const id = `req_${this.#nextId++}`;
     const promise = new Promise<unknown>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject, onUpdate });
     });
+    // A synchronous send failure can reject this before `await promise` attaches.
+    void promise.catch(() => {});
+    let cancelTimer: ReturnType<typeof setTimeout> | undefined;
     const abortHandler = () => {
       if (this.#pending.has(id)) {
         try {
           this.#send({ type: "cancel", id });
-        } catch {}
+        } catch (error) { this.#terminate(error); }
+        cancelTimer = setTimeout(() => {
+          if (this.#pending.has(id)) this.#terminate(new Error(`Remote request cancellation timed out after ${this.#cancelTimeoutMs}ms`));
+        }, this.#cancelTimeoutMs);
+        cancelTimer.unref?.();
       }
     };
     signal?.addEventListener("abort", abortHandler, { once: true });
@@ -164,14 +184,16 @@ export class RemoteRuntimeClient {
       });
       return await promise;
     } finally {
+      clearTimeout(cancelTimer);
       signal?.removeEventListener("abort", abortHandler);
       this.#pending.delete(id);
     }
   }
 
   async close(timeoutMs = 10_000): Promise<void> {
-    if (this.#closed) return;
+    if (this.#closed) { await this.#terminationPromise; return; }
     if (this.#closePromise) return this.#closePromise;
+    this.#closing = true;
     this.#closePromise = this.#closeOnce(timeoutMs);
     return this.#closePromise;
   }
@@ -189,27 +211,41 @@ export class RemoteRuntimeClient {
       if (code !== 0) throw new Error(`Remote runtime cleanup failed (exit ${code})`);
     } catch (error) {
       this.#terminate(error);
+      await this.#terminationPromise;
       throw error;
     }
   }
 
-  kill(): void {
+  kill(): Promise<void> {
     this.#terminate(new Error("Remote runtime killed"));
+    return this.#terminationPromise!;
   }
 
   #send(message: Request): void {
     if (this.#closed) throw new Error("Remote runtime is disconnected");
     const stdin = this.#process.stdin;
-    if (!stdin || stdin.destroyed || stdin.writableEnded) {
-      throw new Error("Remote runtime input is closed");
+    try {
+      if (!stdin || stdin.destroyed || stdin.writableEnded) {
+        throw new Error("Remote runtime input is closed");
+      }
+      const frame = encodeMessage(message);
+      if (stdin.writableLength + Buffer.byteLength(frame) > MAX_QUEUED_PROTOCOL_BYTES) {
+        throw new Error("Remote runtime input queue exceeded limit");
+      }
+      stdin.write(frame, (error) => { if (error) this.#terminate(error); });
+    } catch (error) {
+      this.#terminate(error);
+      throw error;
     }
-    stdin.write(encodeMessage(message));
   }
 
   async #readStdout(): Promise<void> {
     if (!this.#process.stdout) return;
     for await (const line of decodeFrames(this.#process.stdout)) {
       if (line.trim()) this.#handle(parseMessage(line));
+    }
+    if (!this.#closed && !this.#closing) {
+      this.#terminate(new Error("Remote runtime stdout closed unexpectedly"));
     }
   }
 
@@ -276,7 +312,7 @@ export class RemoteRuntimeClient {
   #terminate(error: unknown): void {
     const failure = error instanceof Error ? error : new Error(String(error));
     // Protocol closure does not imply process exit (e.g. initialization errors).
-    if (this.#process.exitCode === null && this.#process.signalCode === null) this.#process.kill();
+    this.#terminationPromise ??= terminateProcess(this.#process);
     this.#close(failure);
   }
 
@@ -287,7 +323,9 @@ export class RemoteRuntimeClient {
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
     this.#eventListeners.clear();
-    for (const listener of this.#closeListeners) listener(error);
+    for (const listener of this.#closeListeners) {
+      try { listener(error); } catch { /* one observer must not break cleanup */ }
+    }
     this.#closeListeners.clear();
   }
 }

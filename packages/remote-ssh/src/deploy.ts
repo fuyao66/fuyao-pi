@@ -1,5 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { terminateProcess } from "./process-lifecycle.ts";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,7 @@ export interface WorkerDeploymentOptions extends Omit<
   workerPath?: string;
   localWorkerPath?: string;
   localArtifactDir?: string;
+  signal?: AbortSignal;
 }
 
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
@@ -46,58 +48,64 @@ async function run(
   command: string[],
   description: string,
   timeoutMs = 120_000,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   return new Promise<string>((resolvePromise, rejectPromise) => {
     const [file, ...args] = command;
     const proc = spawn(file, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    let failed = false;
+    const fail = (error: Error) => {
+      if (failed) return;
+      failed = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      void terminateProcess(proc).then(() => rejectPromise(error));
+    };
     let stdoutBytes = 0;
     let stderrBytes = 0;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
     proc.stdout?.on("data", (chunk: Buffer) => {
+      if (failed) return;
       stdoutBytes += chunk.length;
       if (stdoutBytes > MAX_COMMAND_OUTPUT_BYTES) {
-        proc.kill();
-        rejectPromise(
-          new Error(
-            `${description} stdout exceeded ${MAX_COMMAND_OUTPUT_BYTES} bytes`,
-          ),
-        );
+        fail(new Error(`${description} stdout exceeded ${MAX_COMMAND_OUTPUT_BYTES} bytes`));
         return;
       }
       stdoutChunks.push(chunk);
     });
 
     proc.stderr?.on("data", (chunk: Buffer) => {
+      if (failed) return;
       stderrBytes += chunk.length;
       if (stderrBytes > MAX_COMMAND_OUTPUT_BYTES) {
-        proc.kill();
-        rejectPromise(
-          new Error(
-            `${description} stderr exceeded ${MAX_COMMAND_OUTPUT_BYTES} bytes`,
-          ),
-        );
+        fail(new Error(`${description} stderr exceeded ${MAX_COMMAND_OUTPUT_BYTES} bytes`));
         return;
       }
       stderrChunks.push(chunk);
     });
 
     const timer = setTimeout(() => {
-      proc.kill();
-      rejectPromise(new Error(`${description} timed out after ${timeoutMs}ms`));
+      fail(new Error(`${description} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
+    const abort = () => fail(signal?.reason instanceof Error ? signal.reason : new Error("Deployment aborted"));
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+
     proc.on("error", (err: Error) => {
-      clearTimeout(timer);
-      rejectPromise(err);
+      fail(err);
     });
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      if (failed) return;
       const stdoutText = Buffer.concat(stdoutChunks).toString("utf-8").trim();
       const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim();
       if (code !== 0) {
@@ -207,7 +215,7 @@ export async function resolveRemoteHome(
 ): Promise<string> {
   const output = await run(
     [...buildSshBaseCommand(options), options.target, `printf '%s\\n' "$HOME"`],
-    "Remote home probe",
+    "Remote home probe", 120_000, options.signal,
   );
   if (!output.startsWith("/") || output.includes("\n")) {
     throw new Error(`Invalid remote home response: ${JSON.stringify(output)}`);
@@ -226,7 +234,7 @@ export async function prepareRemoteWorker(
         options.target,
         "uname -s && uname -m && printf '%s' \"$HOME\"",
       ],
-      "Probe remote host platform and home",
+      "Probe remote host platform and home", 120_000, options.signal,
     ),
   );
   const arch = SUPPORTED_PLATFORMS[probe.platform];
@@ -269,7 +277,7 @@ export async function prepareRemoteWorker(
   const exists = await run(
     [...buildSshBaseCommand(options), options.target,
       `if ${checks.join(" && ")}; then ${links} ${boundedPrune} printf ready; elif test -x ${quotedWorker} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${hash}'; then printf present; else printf missing; fi`],
-    "Remote bundle cache check",
+    "Remote bundle cache check", 120_000, options.signal,
   );
   if (exists === "ready") return { workerPath: remoteWorker, home: probe.home };
   if (exists === "present") {
@@ -286,7 +294,7 @@ export async function prepareRemoteWorker(
       options.target,
       `mkdir -p ${quoteRemoteArgument(remoteDir)} && chmod 700 ${quoteRemoteArgument(remoteDir)}`,
     ],
-    "Remote cache setup",
+    "Remote cache setup", 120_000, options.signal,
   );
   const nonce = crypto.randomUUID();
   const temporary = `${remoteWorker}.upload-${nonce}`;
@@ -295,22 +303,33 @@ export async function prepareRemoteWorker(
   // The worker is a ~200 MB uncompressed Bun executable; ssh-level compression
   // measured ~40% fewer bytes on the wire for the one-time upload per version.
   scp.push("-C", localWorker, `${options.target}:${quoteRemoteArgument(temporary)}`);
-  await run(scp, "Worker upload", 600_000);
-  const quotedTemporary = quoteRemoteArgument(temporary);
-  const quotedTemporaryMarker = quoteRemoteArgument(temporaryMarker);
-  await run(
-    [
-      ...buildSshBaseCommand(options),
-      options.target,
-      `set -eu; actual=$(sha256sum ${quotedTemporary} | cut -d ' ' -f 1); test "$actual" = '${hash}'; chmod 700 ${quotedTemporary}; mv -f ${quotedTemporary} ${quotedWorker}; printf '%s\\n' '${hash}' > ${quotedTemporaryMarker}; chmod 600 ${quotedTemporaryMarker}; mv -f ${quotedTemporaryMarker} ${quotedMarker}`,
-    ],
-    "Worker activation",
-  );
+  try {
+    await run(scp, "Worker upload", 600_000, options.signal);
+    const quotedTemporary = quoteRemoteArgument(temporary);
+    const quotedTemporaryMarker = quoteRemoteArgument(temporaryMarker);
+    await run(
+      [
+        ...buildSshBaseCommand(options),
+        options.target,
+        `set -eu; actual=$(sha256sum ${quotedTemporary} | cut -d ' ' -f 1); test "$actual" = '${hash}'; chmod 700 ${quotedTemporary}; mv -f ${quotedTemporary} ${quotedWorker}; printf '%s\\n' '${hash}' > ${quotedTemporaryMarker}; chmod 600 ${quotedTemporaryMarker}; mv -f ${quotedTemporaryMarker} ${quotedMarker}`,
+      ],
+      "Worker activation", 120_000, options.signal,
+    );
+  } catch (error) {
+    await removeFailedUploads(options, [temporary, temporaryMarker]);
+    throw error;
+  }
   await deployCompanionArtifacts(options, probe.home, arch, remoteDir, bundle);
   await pruneStaleRemoteWorkers(options, `${cacheDir}/${bundle.cacheNamespace}`, hash).catch(
     () => undefined,
   );
   return { workerPath: remoteWorker, home: probe.home };
+}
+
+async function removeFailedUploads(options: WorkerDeploymentOptions, paths: string[]): Promise<void> {
+  // Bound best-effort cleanup; preserve the original upload/activation error.
+  await run([...buildSshBaseCommand(options), options.target,
+    `rm -f -- ${paths.map(quoteRemoteArgument).join(" ")}`], "Failed upload cleanup", 5_000).catch(() => {});
 }
 
 /** Versions retained under one contract namespace: the one just activated plus the previous one. */
@@ -348,6 +367,7 @@ async function pruneStaleRemoteWorkers(
       buildPruneStaleWorkersCommand(namespaceDir, activeHash),
     ],
     "Remote worker cache prune",
+    5_000, options.signal,
   );
 }
 
@@ -397,7 +417,7 @@ async function deployCompanionArtifact(
       options.target,
       `test -x ${quotedRemoteArtifactBin} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${artifactHash}' && printf present || printf missing`,
     ],
-    `${artifact.id} companion artifact check`,
+    `${artifact.id} companion artifact check`, 120_000, options.signal,
   );
 
   if (exists !== "present" && exists !== "missing")
@@ -409,7 +429,7 @@ async function deployCompanionArtifact(
         options.target,
         `mkdir -p ${quoteRemoteArgument(remoteArtifactDir)} && chmod 700 ${quoteRemoteArgument(remoteArtifactDir)}`,
       ],
-      `${artifact.id} companion artifact cache setup`,
+      `${artifact.id} companion artifact cache setup`, 120_000, options.signal,
     );
     const nonce = crypto.randomUUID();
     const tempUpload = `${remoteArtifactBin}.upload-${nonce}`;
@@ -419,15 +439,20 @@ async function deployCompanionArtifact(
       localArtifact,
       `${options.target}:${quoteRemoteArgument(tempUpload)}`,
     );
-    await run(scp, `${artifact.id} companion artifact upload`);
-    await run(
-      [
-        ...buildSshBaseCommand(options),
-        options.target,
-        `set -eu; actual=$(sha256sum ${quoteRemoteArgument(tempUpload)} | cut -d ' ' -f 1); test "$actual" = '${artifactHash}'; chmod 700 ${quoteRemoteArgument(tempUpload)}; mv -f ${quoteRemoteArgument(tempUpload)} ${quotedRemoteArtifactBin}; printf '%s\n' '${artifactHash}' > ${quoteRemoteArgument(tempMarker)}; chmod 600 ${quoteRemoteArgument(tempMarker)}; mv -f ${quoteRemoteArgument(tempMarker)} ${quotedMarker}`,
-      ],
-      `${artifact.id} companion artifact activation`,
-    );
+    try {
+      await run(scp, `${artifact.id} companion artifact upload`, 120_000, options.signal);
+      await run(
+        [
+          ...buildSshBaseCommand(options),
+          options.target,
+          `set -eu; actual=$(sha256sum ${quoteRemoteArgument(tempUpload)} | cut -d ' ' -f 1); test "$actual" = '${artifactHash}'; chmod 700 ${quoteRemoteArgument(tempUpload)}; mv -f ${quoteRemoteArgument(tempUpload)} ${quotedRemoteArtifactBin}; printf '%s\n' '${artifactHash}' > ${quoteRemoteArgument(tempMarker)}; chmod 600 ${quoteRemoteArgument(tempMarker)}; mv -f ${quoteRemoteArgument(tempMarker)} ${quotedMarker}`,
+        ],
+        `${artifact.id} companion artifact activation`, 120_000, options.signal,
+      );
+    } catch (error) {
+      await removeFailedUploads(options, [tempUpload, tempMarker]);
+      throw error;
+    }
   }
 
   await run(
@@ -436,7 +461,7 @@ async function deployCompanionArtifact(
       options.target,
       `ln -sf ${quotedRemoteArtifactBin} ${quotedWorkerDir}/${quoteRemoteArgument(artifact.executableName)}`,
     ],
-    `Link ${artifact.id} companion artifact to worker directory`,
+    `Link ${artifact.id} companion artifact to worker directory`, 120_000, options.signal,
   );
 }
 

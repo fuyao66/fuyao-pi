@@ -237,6 +237,7 @@ describe("SSH command safety", () => {
       workerPath: "/srv/worker",
     });
     const scp = buildScpBaseCommand({ target: "user@example.com" });
+    expect(scp.slice(0, 2)).toEqual(["scp", "-O"]);
     for (const command of [ssh, scp]) {
       expect(command).toContain("StrictHostKeyChecking=yes");
       expect(command).toContain("BatchMode=yes");

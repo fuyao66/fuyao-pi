@@ -50,6 +50,14 @@ ACP_AUTO_UPDATE=0 pi -e /绝对路径/fuyao-pi/packages/remote-ssh/dist/pi-exten
 
 旧 AFT / FFF / RTK / Tintin managed entry 和按插件组合构建 worker 的方式已移除。构建过程不修改全局 Pi 配置，不自动安装扩展。建议本配置禁用 BCP 自动更新；升级 BCP 后重新验证。
 
+## 故障处理与资源上限
+
+- 连接准备在 SSH 操作之前就占用远端执行域。连接期间阻止工作区工具和本地 `! / !!`；准备失败或被取消后保持 fail-closed，需 `/remote-exit` 恢复。准备期间拒绝第二次连接或退出；请先停止/取消当前连接操作。
+- Worker 进程错误、输入断管和协议 stdout 异常 EOF 会关闭 transport 并拒绝等待中的调用。取消后最多等 5 秒，未收到终态响应则关闭整个连接（含其他并行调用）。不会自动重试命令：返回错误不代表远端没有发生写入。
+- Transport 清理先发 SIGTERM，250 毫秒后升级 SIGKILL，并限制管道清理等待时间。这会回收本地 SSH 进程，但不能保证杀死远端脱离 worker 的后台进程。
+- Worker 最多同时执行 32 个请求；重复的活跃 request id 会导致安全断开。单帧上限 16 MiB，协议输入/输出缓冲上限 32 MiB；超限断开，而不是无限积累内存。
+- 上传固定使用 `scp -O`（legacy SCP），使现代 OpenSSH 正确解释经过 shell 引用的远端路径。远端需允许 legacy SCP。失败上传会执行有时限的尽力清理；网络中断仍可能留下临时文件。
+
 ## 使用
 
 ```text

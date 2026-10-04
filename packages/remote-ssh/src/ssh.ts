@@ -76,7 +76,9 @@ export function buildSshBaseCommand(options: SshConnectionOptions): string[] {
 }
 
 export function buildScpBaseCommand(options: SshConnectionOptions): string[] {
-  const command = ["scp"];
+  // Destinations below use remote shell quoting. Pin legacy SCP semantics:
+  // OpenSSH 9's default SFTP treats those quotes as literal path characters.
+  const command = ["scp", "-O"];
   appendCommonOptions(command, options);
   command.push(
     "-o",

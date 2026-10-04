@@ -27,6 +27,38 @@ describe("Pi workspace execution boundaries", () => {
     expect(binding.phase).toBe("local");
   });
 
+  test("late suspension failure cannot poison a newer workspace", async () => {
+    const binding = new PiWorkspaceBinding();
+    const suspended = Promise.withResolvers<void>();
+    const unregister = binding.register({ suspend: () => suspended.promise });
+    const old = binding.begin().catch((error: unknown) => error);
+    await binding.close();
+    unregister();
+    const scope = { isClosed: false, close: async () => {} } as unknown as PiRemoteWorkspaceScope;
+    binding.commit(scope, await binding.begin());
+    suspended.reject(new Error("old suspension failed"));
+    expect(String(await old)).toContain("old suspension failed");
+    expect(binding.phase).toBe("remote");
+    expect(binding.scope).toBe(scope);
+    await binding.close();
+  });
+
+  test("late suspension completion cannot clear a newer workspace", async () => {
+    const binding = new PiWorkspaceBinding();
+    const suspended = Promise.withResolvers<void>();
+    const unregister = binding.register({ suspend: () => suspended.promise });
+    const old = binding.begin().catch((error: unknown) => error);
+    await binding.close();
+    unregister();
+    const scope = { isClosed: false, close: async () => {} } as unknown as PiRemoteWorkspaceScope;
+    binding.commit(scope, await binding.begin());
+    suspended.resolve();
+    expect(String(await old)).toContain("obsolete");
+    expect(binding.phase).toBe("remote");
+    expect(binding.scope).toBe(scope);
+    await binding.close();
+  });
+
   test("closing failure retains the selected execution domain", async () => {
     const binding = new PiWorkspaceBinding();
     const scope = {

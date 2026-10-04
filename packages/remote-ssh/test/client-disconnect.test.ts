@@ -7,6 +7,92 @@ import type { RemoteRuntimeHandshake } from "../src/runtime-contract.ts";
 const handshake: RemoteRuntimeHandshake = { host: "pi", hostVersion: "test", runtimeVersion: "fixture", requestedTools: ["read"], validateReady(ready) { expect(ready.host).toBe("pi"); } };
 
 describe("remote runtime disconnects", () => {
+  test("missing executable rejects ready instead of crashing the host", async () => {
+    const client = new RemoteRuntimeClient({ command: ["/nonexistent/pi-remote-worker"] });
+    await expect(client.initialize("/unused", handshake)).rejects.toThrow();
+    expect(client.isClosed).toBe(true);
+    await client.close();
+  });
+
+  test("closed worker stdin cannot crash the host on a later write", async () => {
+    const client = new RemoteRuntimeClient({ command: ["node", "-e", `
+      const fs = require('node:fs');
+      fs.closeSync(0);
+      console.log(JSON.stringify({ type: 'ready', protocolVersion: 1, host: 'pi', tools: [] }));
+      setInterval(() => {}, 1000);
+    `] });
+    try {
+      await client.initialize("/unused", handshake);
+      await expect(client.execute("read", "broken-pipe", { payload: "x".repeat(1024 * 1024) })).rejects.toThrow();
+      expect(client.isClosed).toBe(true);
+    } finally { await client.kill(); }
+  });
+
+  test("stdout EOF rejects pending work even when worker stays alive", async () => {
+    const client = new RemoteRuntimeClient({ command: ["node", "-e", `
+      console.log(JSON.stringify({ type: 'ready', protocolVersion: 1, host: 'pi', tools: [] }));
+      process.stdin.once('data', () => { setTimeout(() => process.stdout.end(), 30); });
+      setInterval(() => {}, 1000);
+    `] });
+    try {
+      await client.initialize("/unused", handshake);
+      await expect(client.execute("read", "eof", {})).rejects.toThrow("stdout closed");
+      expect(client.isClosed).toBe(true);
+    } finally { await client.kill(); }
+  });
+
+  test("unresponsive cancellation closes all pending calls", async () => {
+    const client = new RemoteRuntimeClient({ cancelTimeoutMs: 20, command: ["bun", join(import.meta.dir, "fixtures/hanging-worker.ts")] });
+    try {
+      await client.initialize("/unused", handshake);
+      const controller = new AbortController();
+      const first = client.execute("read", "cancel", {}, controller.signal);
+      const second = client.execute("read", "sibling", {});
+      const outcomes = Promise.allSettled([first, second]);
+      controller.abort();
+      for (const outcome of await outcomes) {
+        expect(outcome.status).toBe("rejected");
+        if (outcome.status === "rejected") expect(String(outcome.reason)).toContain("cancellation timed out");
+      }
+      expect(client.isClosed).toBe(true);
+    } finally { await client.kill(); }
+  });
+
+  test("bounds pending requests without disconnecting accepted calls", async () => {
+    const client = new RemoteRuntimeClient({ command: ["bun", join(import.meta.dir, "fixtures/hanging-worker.ts")] });
+    await client.initialize("/unused", handshake);
+    try {
+      const calls = Array.from({ length: 32 }, (_, i) => client.execute("read", String(i), {}));
+      const outcomes = Promise.allSettled(calls);
+      await expect(client.execute("read", "excess", {})).rejects.toThrow("request limit");
+      expect(client.isClosed).toBe(false);
+      await client.kill();
+      expect((await outcomes).every((result) => result.status === "rejected")).toBe(true);
+    } finally { await client.kill(); }
+  });
+
+  test("force cleanup reaps a worker ignoring SIGTERM", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "worker-term-ignore-"));
+    const pidFile = join(dir, "pid");
+    const client = new RemoteRuntimeClient({ command: ["bun", "-e", `
+      process.on('SIGTERM', () => {});
+      await Bun.write(${JSON.stringify(pidFile)}, String(process.pid));
+      console.log(JSON.stringify({ type: 'ready', protocolVersion: 1, host: 'pi', tools: [] }));
+      process.stdin.resume(); setInterval(() => {}, 1000);
+    `] });
+    let pid: number | undefined;
+    try {
+      await client.initialize("/unused", handshake);
+      pid = Number(await readFile(pidFile, "utf8"));
+      await client.kill();
+      expect(() => process.kill(pid!, 0)).toThrow();
+      await client.close();
+    } finally {
+      await client.kill();
+      if (pid) { try { process.kill(pid, "SIGKILL"); } catch {} }
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test("initialization error terminates the worker even after logical closure", async () => {
     const dir = await mkdtemp(join(tmpdir(), "worker-init-error-"));
     const pidFile = join(dir, "pid");
