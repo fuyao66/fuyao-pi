@@ -52,7 +52,7 @@ async function fixture(options: { exitTimeoutMs?: number; dispatch?: (command: s
   }, get closed() { return closed; }, idle() { busy = false; idle.resolve(); }, skipReload(value: boolean) { skipReload = value; }, async dispose() { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); await rm(cwd, { recursive: true, force: true }); } };
 }
 async function bash(session: Awaited<ReturnType<typeof fixture>>["session"]) {
-  const result = await session.getToolDefinition("bash")!.execute("local-check", { command: "printf LOCAL_AFTER_EXIT" }, undefined, undefined, session.extensionRunner.createContext());
+  const result = await session.getToolDefinition("bash")!.execute("local-check", { command: "printf LOCAL_AFTER_EXIT" }, undefined, undefined, session.extensionRunner.createToolContext("local-check", undefined));
   return result.content.map((item) => item.type === "text" ? item.text : "").join("");
 }
 
@@ -91,7 +91,7 @@ test("skipped reload cannot report local mode and explicit exit can recover", as
   try {
     f.idle(); f.skipReload(true);
     await f.session.prompt("/remote-exit");
-    const status = await f.session.getToolDefinition("remote_workspace_status")!.execute("status", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    const status = await f.session.getToolDefinition("remote_workspace_status")!.execute("status", {}, undefined, undefined, f.session.extensionRunner.createToolContext("status", undefined));
     expect(JSON.stringify(status.content)).toContain('unavailable');
     f.skipReload(false);
     await f.session.prompt("/remote-exit");
@@ -103,10 +103,10 @@ test("model exit returns before idle and blocks workspace calls until restoratio
   const f = await fixture();
   try {
     const exitTool = f.session.getToolDefinition("remote_exit")!;
-    const result = await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    const result = await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createToolContext("exit", undefined));
     expect(result.details).toMatchObject({ queued: true });
     expect(result.terminate).toBe(true);
-    const duplicate = await exitTool.execute("duplicate", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    const duplicate = await exitTool.execute("duplicate", {}, undefined, undefined, f.session.extensionRunner.createToolContext("duplicate", undefined));
     expect(duplicate.details).toMatchObject({ queued: false });
     const gate = await f.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "bash", toolCallId: "blocked", input: { command: "touch forbidden" } });
     expect(gate?.block).toBe(true);
@@ -121,7 +121,7 @@ test("model exit returns before idle and blocks workspace calls until restoratio
 test("releases a pending exit when asynchronous command dispatch rejects", async () => {
   const f = await fixture({ dispatch: async () => { throw new Error("dispatch failed"); } });
   try {
-    await f.session.getToolDefinition("remote_exit")!.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    await f.session.getToolDefinition("remote_exit")!.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createToolContext("exit", undefined));
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(f.remoteState.pendingReload).toBeUndefined();
     expect(f.closed).toBe(false);
@@ -136,7 +136,7 @@ test("expired queued exit cannot close a workspace when delivered late", async (
   const f = await fixture({ exitTimeoutMs: 20, dispatch: (value) => { command = value; } });
   try {
     const exitTool = f.session.getToolDefinition("remote_exit")!;
-    await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    await exitTool.execute("exit", {}, undefined, undefined, f.session.extensionRunner.createToolContext("exit", undefined));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(command).toContain("--request=");
     expect(f.remoteState.pendingReload).toBeUndefined();
@@ -145,7 +145,7 @@ test("expired queued exit cannot close a workspace when delivered late", async (
     expect(f.closed).toBe(false);
     expect(await bash(f.session)).toBe("REMOTE");
     // A newer request remains intact when the old command arrives again.
-    await exitTool.execute("retry", {}, undefined, undefined, f.session.extensionRunner.createContext());
+    await exitTool.execute("retry", {}, undefined, undefined, f.session.extensionRunner.createToolContext("retry", undefined));
     const pending = f.remoteState.pendingReload;
     await f.session.prompt(command);
     expect(f.remoteState.pendingReload).toBe(pending);

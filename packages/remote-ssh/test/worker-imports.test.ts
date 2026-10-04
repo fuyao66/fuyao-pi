@@ -3,7 +3,8 @@ import { requireWorkerVersion, requireWorkerExport, workerImports } from "../scr
 
 describe("fixed worker build adapter", () => {
   test("rejects unreviewed versions and absent internal exports", () => {
-    expect(() => requireWorkerVersion("0.87.1")).not.toThrow();
+    expect(() => requireWorkerVersion("1.0.2")).not.toThrow();
+    expect(() => requireWorkerVersion("0.87.1")).toThrow("Review internal exports");
     expect(() => requireWorkerVersion("0.88.0")).toThrow("Review internal exports");
     expect(() => requireWorkerExport({}, "createReadTool")).toThrow("missing function");
     expect(() => requireWorkerExport({ createReadTool: 1 }, "createReadTool")).toThrow();

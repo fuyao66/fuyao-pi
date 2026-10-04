@@ -1,8 +1,8 @@
-# Pi SSH Remote — Pi + billion-context-pi
+# Pi SSH Remote
 
 A first-party plugin in [fuyao-pi](../../README.md): a dedicated SSH workspace bridge, **not an arbitrary plugin compatibility layer**.
 
-Supported baseline: **Pi 0.87.1 + billion-context-pi 0.1.82 (`billion-context-pi:dist`)**. Worker dependencies are pinned; a different Pi version requires rebuilding and validating the bridge. BCP is supplied by the local agent, never bundled into the remote worker.
+Supported baseline: the `piVersion` in [`config/plugins.json`](../../config/plugins.json). Worker dependencies are pinned; a different Pi version requires rebuilding and validating the bridge. BCP is an optional peer integration: when loaded, its local context and compression tools remain on the host and are never bundled into the remote worker.
 
 ## Execution boundary
 
@@ -29,7 +29,7 @@ Verified with `@juicesharp/rpiv-ask-user-question@2.11.0` and `@juicesharp/rpiv-
 
 ## Build and load
 
-Requires Bun for builds, Node compatible with Pi 0.87.1 on the client, and OpenSSH `ssh`/`scp`. Remote targets are Linux x64 or arm64, with Bash. Install `rg` and `fd` on remote PATH for native Pi search tools (otherwise Pi's native tool discovery/download policy applies).
+Requires Bun for builds, Node compatible with the locked Pi baseline on the client, and OpenSSH `ssh`/`scp`. Remote targets are Linux x64 or arm64, with Bash. Install `rg` and `fd` on remote PATH for native Pi search tools (otherwise Pi's native tool discovery/download policy applies).
 
 Run from the **fuyao-pi repository root**:
 

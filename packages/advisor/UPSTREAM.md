@@ -11,7 +11,7 @@
 
 The upstream `buildSessionContext(getEntries(), getLeafId())` path bypassed BCP's
 request-time `context` transform. This fork instead captures a deep copy in
-`context_with_system`, which Pi 0.87.1 dispatches after **all** `context` handlers.
+`context_with_system`, which the reviewed Pi baseline dispatches after **all** `context` handlers.
 It removes executor system/tool declarations, uses the Advisor system prompt,
 adds the current caller's visible text (no unfinished calls/thinking), and keeps
 the tool-free authenticated model call. Images are always replaced by a privacy
@@ -59,5 +59,9 @@ The picker, model blocklist, prompt guidance, and reply handling are otherwise
 retained. Advisor remains local and has no tools, including decompression.
 
 Tests: `bun test packages/advisor/test`; root `bun run check` also includes Advisor
-typechecking and regression tests. BCP is a pinned development dependency for the
-real-compression test, not a second runtime extension loaded by this package.
+typechecking and regression tests. The real-compression test loads BCP from the
+installed locked profile (`FUYAO_TEST_AGENT_DIR` can select it), not a build dependency
+or second runtime extension. Advisor is `model-only`: nested Codemode calls cannot
+supply the required standalone transcript entry. Host-provided `typebox` is a wildcard
+peer, not a runtime dependency; shared RPIV config uses the upstream peer-declaration
+fix without changing its source logic.

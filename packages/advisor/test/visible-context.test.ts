@@ -79,7 +79,7 @@ describe("advisor transformed context", () => {
     }
   });
   test("inventory refreshes when SSH changes descriptions or schemas without renaming tools", () => {
-    const tools = (description: string, parameters = {}) => [{ name: "read", description, parameters, sourceInfo: { source: "builtin", path: "<read>", scope: "temporary" as const, origin: "top-level" as const } }];
+    const tools = (description: string, parameters = {}) => [{ name: "read", exposure: "direct" as const, description, parameters, sourceInfo: { source: "builtin", path: "<read>", scope: "temporary" as const, origin: "top-level" as const } }];
     expect(JSON.stringify(getInventoryMessage(tools("local")))).toContain("local");
     const remote = getInventoryMessage(tools("remote"));
     expect(JSON.stringify(remote)).toContain("remote");

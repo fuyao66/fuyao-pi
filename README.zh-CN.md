@@ -28,9 +28,11 @@
 运行环境需要 Pi、Node.js **22.19+**、Bun 和 Git；SSH 工作流另需 OpenSSH。远端 worker 面向 Linux x64/arm64。支持的 Pi 基线记录在 `config/plugins.json` 和依赖锁文件中。向已有 Pi 环境应用前，请先看[配置说明](docs/configuration.md)。
 
 ```sh
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
 git clone https://github.com/fuyao66/fuyao-pi.git
 cd fuyao-pi
+# 从清单读取已验证的 Pi 基线，不直接安装 latest。
+PI_VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("config/plugins.json", "utf8")).piVersion')
+npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@$PI_VERSION"
 bun install --frozen-lockfile
 bun run check
 
@@ -38,9 +40,12 @@ bun run check
 bun run setup
 bun run setup --apply
 # 下载固定版本的配套插件，然后重启 Pi
-pi update --extensions
+node -e 'for (const source of JSON.parse(require("fs").readFileSync("config/plugins.json", "utf8")).packages) console.log(source)' |
+  while IFS= read -r source; do pi install "$source" || exit 1; done
 pi
 ```
+
+需要完整锁定 CLI 的间接依赖时，使用官方 managed 安装并核对目标发布版本；仅固定全局 npm 包版本并不足以固定全部间接依赖。见[维护说明](docs/maintenance.md)。
 
 `check` 会构建本地 remote-ssh 扩展入口，**不会编译远端 worker**。首次使用 SSH 前再执行：
 

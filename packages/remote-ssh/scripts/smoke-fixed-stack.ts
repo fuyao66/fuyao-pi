@@ -69,7 +69,7 @@ try {
   assert.deepEqual(session.getActiveToolNames().sort(), ["bash", "read"]);
   const gate = await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: "child-read", toolName: "read", input: { path: "probe.txt" } });
   assert.ok(!gate?.block, JSON.stringify(gate));
-  const result = await session.getToolDefinition("read")!.execute("child-read", { path: "probe.txt" }, undefined, undefined, session.extensionRunner.createContext());
+  const result = await session.getToolDefinition("read")!.execute("child-read", { path: "probe.txt" }, undefined, undefined, session.extensionRunner.createToolContext("child-read", undefined));
   assert.ok(JSON.stringify(result).includes("remote-modified"), JSON.stringify(result));
   assert.ok(!JSON.stringify(result).includes("WRONG_LOCAL_FILE"));
   console.log("PASS: compiled core tools + built extension inherited restricted Pi child (SSH process shim)");

@@ -33,7 +33,7 @@ describe("BCP stays local while workspace tools are remote", () => {
     expect(guardDelegateCwd({ cwd: "/other" }, "/local", "/remote")?.block).toBe(true);
   });
   test("restricted delegates verify source without requiring a status tool", () => {
-    const tool = { name: "read", description: "read", parameters: createReadTool("/tmp").parameters, sourceInfo: { source: "extension", path: "/bridge.js", scope: "temporary" as const, origin: "top-level" as const } };
+    const tool = { name: "read", exposure: "direct" as const, description: "read", parameters: createReadTool("/tmp").parameters, sourceInfo: { source: "extension", path: "/bridge.js", scope: "temporary" as const, origin: "top-level" as const } };
     expect(getPiRemoteOwnershipErrors([tool], [tool], new Set(["read"]), "/bridge.js")).toEqual([]);
     expect(getPiRemoteOwnershipErrors([tool], [tool], new Set(["read"]), "/other.js")).toEqual(["read"]);
   });

@@ -6,7 +6,7 @@ import type { BunPlugin } from "bun";
 
 // Build-only adapter. Runtime/source extensions keep using Pi's public entrypoints.
 // Internal paths are deliberately gated to the version verified by worker smoke tests.
-export const SUPPORTED_WORKER_PI_VERSION = "0.87.1";
+export const SUPPORTED_WORKER_PI_VERSION = "1.0.2";
 export function requireWorkerVersion(version: string): void {
   if (version !== SUPPORTED_WORKER_PI_VERSION) throw new Error(`Worker import adapter requires Pi ${SUPPORTED_WORKER_PI_VERSION}; got ${version}. Review internal exports before upgrading.`);
 }

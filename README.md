@@ -28,9 +28,11 @@ The four local packages are built/configured through this repository; the six co
 Runtime: Pi, Node.js **22.19+**, Bun and Git; SSH workflows also require OpenSSH. The remote worker targets Linux x64/arm64. The supported Pi baseline is recorded in `config/plugins.json` and the dependency lock. See [configuration](docs/configuration.md) before applying the profile to an existing Pi installation.
 
 ```sh
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
 git clone https://github.com/fuyao66/fuyao-pi.git
 cd fuyao-pi
+# Use the Pi baseline from the profile (never an unreviewed latest).
+PI_VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("config/plugins.json", "utf8")).piVersion')
+npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@$PI_VERSION"
 bun install --frozen-lockfile
 bun run check
 
@@ -38,9 +40,12 @@ bun run check
 bun run setup
 bun run setup --apply
 # Download the pinned companion packages, then restart Pi.
-pi update --extensions
+node -e 'for (const source of JSON.parse(require("fs").readFileSync("config/plugins.json", "utf8")).packages) console.log(source)' |
+  while IFS= read -r source; do pi install "$source" || exit 1; done
 pi
 ```
+
+For a fully pinned CLI dependency tree, use the official managed installer with the reviewed release; an exact global npm version alone does not lock transitive dependencies. See [maintenance](docs/maintenance.md).
 
 `check` builds the local remote-ssh entry; **it does not compile remote workers**. Before the first SSH connection:
 

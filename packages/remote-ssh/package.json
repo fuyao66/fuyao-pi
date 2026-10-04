@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Fuyao Pi first-party remote-ssh plugin for Pi + billion-context-pi:dist",
+  "description": "Fuyao Pi first-party remote workspace bridge for Pi with optional BCP integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/fuyao66/fuyao-pi.git",
@@ -13,9 +13,8 @@
   "keywords": ["pi-package"],
   "files": ["dist", "README.md", "README.zh-CN.md"],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.87.1",
-    "@earendil-works/pi-agent-core": "0.87.1",
-    "billion-context-pi": "0.1.82"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-agent-core": "*"
   },
   "pi": { "extensions": ["./dist/pi-extension.js"] }
 }

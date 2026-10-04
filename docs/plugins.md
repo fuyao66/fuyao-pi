@@ -38,7 +38,7 @@
 2. 只修改 `config/plugins.json` 中对应的版本，并在需要时刷新依赖锁。
 3. 本地派生插件需要人工合并上游改动，同时更新对应的 `UPSTREAM.md`。
 4. 运行 `bun run check`；如果涉及 BCP、Memory、Advisor 或 Remote SSH，执行相应的兼容性和 worker 验证。
-5. 运行 `bun run setup --apply`，再用相同的 agent 目录执行 `pi update --extensions`，最后重启 Pi。
+5. 运行 `bun run setup --apply`，再用相同的 agent 目录对改动的固定条目执行 `pi install <source>`，最后重启 Pi。
 
 社区插件的固定版本不会自动更新。`setup --apply` 会在用户的 `acp.json` 中关闭 BCP 官方 `autoUpdate`，并保留其他 ACP 配置。`ACP_AUTO_UPDATE=0` 只作为临时诊断覆盖，不作为日常启动命令的一部分。
 

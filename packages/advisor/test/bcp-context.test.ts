@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAcpExtension } from "billion-context-pi";
 import { createEventBus, createExtensionRuntime, ExtensionRunner, SessionManager, buildSessionContext, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadExtensionFromFactory } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
+import { loadExtensions, loadExtensionFromFactory } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 import { VisibleContext } from "../advisor/visible-context.js";
 import { executeAdvisor } from "../advisor/execute.js";
 import { setAdvisorModel } from "../advisor/state.js";
@@ -34,7 +33,19 @@ test("real BCP compression hides journal originals from the actual Advisor side-
     runtime.getAllTools = () => [];
     runtime.getActiveTools = () => ["compress", "advisor"];
     const bus = createEventBus();
-    const bcp = await loadExtensionFromFactory(createAcpExtension({ autoUpdate: false, delegate: { enabled: false }, modelContextLimit: 1_000_000, preserveRecentMessages: 2 }), dir, bus, runtime, "test-bcp");
+    // BCP is optional: read its declared extension entry from the profile.
+    // Pi's loader maps host imports to the SDK under test (not a second Pi copy).
+    const profile = process.env.FUYAO_TEST_AGENT_DIR ?? saved ?? join(homedir(), ".pi", "agent");
+    const bcpPackageDir = join(profile, "npm", "node_modules", "billion-context-pi");
+    const bcpManifest = JSON.parse(await readFile(join(bcpPackageDir, "package.json"), "utf8")) as { pi?: { extensions?: string[] } };
+    const bcpEntry = bcpManifest.pi?.extensions?.[0];
+    if (!bcpEntry) throw new Error("Install the locked BCP profile plugin before running its integration test");
+    const bcpPath = join(bcpPackageDir, bcpEntry);
+    const fixturePath = join(dir, "bcp-fixture.ts");
+    await writeFile(fixturePath, `import { createAcpExtension } from ${JSON.stringify(bcpPath)}; export default createAcpExtension({ autoUpdate: false, delegate: { enabled: false }, modelContextLimit: 1000000, preserveRecentMessages: 2 });`);
+    const loaded = await loadExtensions([fixturePath], dir, bus, runtime);
+    expect(loaded.errors).toEqual([]);
+    const bcp = loaded.extensions[0]!;
     const visible = new VisibleContext();
     let advisorApi!: ExtensionAPI;
     const advisor = await loadExtensionFromFactory((pi) => { advisorApi = pi; visible.register(pi); }, dir, bus, runtime, "test-advisor");
@@ -49,7 +60,7 @@ test("real BCP compression hides journal originals from the actual Advisor side-
     const params = { content: [{ startId: "m00002", endId: "m00003", summary: "BCP_SUMMARY_ONLY: old synthetic evidence consumed; no unresolved questions or outstanding work in the folded range." }] };
     sm.appendMessage({ ...reply("Compress old evidence"), stopReason: "toolUse", content: [{ type: "toolCall", name: "compress", id: "compress-1", arguments: params }] });
     const tool = bcp.tools.get("compress")!.definition;
-    const result = await tool.execute("compress-1", params, undefined, undefined, runner.createContext());
+    const result = await tool.execute("compress-1", params, undefined, undefined, runner.createToolContext("compress-1", undefined));
     expect(JSON.stringify(result)).not.toContain("Errors:");
     expect(JSON.stringify(result)).toContain("b1=");
     sm.appendMessage({ role: "toolResult", toolName: "compress", toolCallId: "compress-1", content: result.content, isError: false, timestamp: Date.now() });

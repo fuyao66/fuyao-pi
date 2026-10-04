@@ -42,7 +42,7 @@ upstream implementations are copied or edited; all target dependencies remain
 bundled, and Photon WASM is still shipped alongside the executable.
 
 These are **internal upstream paths**, not a stable public API. The adapter checks
-Pi coding-agent and pi-ai versions (currently 0.87.1), module existence and function
+Pi coding-agent and pi-ai versions against its reviewed baseline, module existence and function
 exports before building. A Pi upgrade requires reviewing the adapter, rebuilding
 both architectures and rerunning the compiled-worker smoke. It must not bypass the
 version gate merely because TypeScript still compiles.

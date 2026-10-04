@@ -12,10 +12,10 @@
 | `bun install --frozen-lockfile` | 安装本仓库工作区依赖 |
 | `bun run check` | 类型检查、构建本地 SSH 扩展、UI 静态检查与测试；不编译远端 worker |
 | `bun run setup` / `--apply` | 预览或备份合并 Pi 包声明和公开默认值 |
-| `pi update --extensions` | 安装/校准配套上游扩展，不更新本地派生源码 |
+| `pi install <清单中的固定来源>` | 安装/校准配套上游扩展，不更新本地派生源码 |
 | `bun run build:pi-worker:all` | 首次 SSH 使用前生成 Linux x64/arm64 worker |
 | `bun run smoke:pi` | 验证进程替身下的 SSH 桥接；不是真实 SSH 连接 |
-| 重启 `pi` | 以固定 BCP 基线加载新扩展/配置；setup 已关闭 BCP 自动更新 |
+| 重启 `pi` | 加载已验证版本的新扩展/配置；setup 已关闭 BCP 自动更新 |
 
 模型认证另行在本地 Pi 配置。所有根命令从仓库根目录执行。
 
@@ -47,7 +47,7 @@ bun run setup --agent-dir /tmp/pi-profile # 预览另一个配置目录
 
 备份路径形如 `settings.json.bak-fuyao-pi-<uuid>`，位于目标 agent 目录。回滚时退出 Pi，将对应备份复制回 `settings.json`，再重启。新配置目录没有旧文件时不生成备份。
 
-应用声明后运行 `pi update --extensions` 下载或校准配置中的固定第三方包。若使用自定义 agent 目录，该命令与启动 Pi 时均设置同一个 `PI_CODING_AGENT_DIR`。`setup --apply` 同时关闭 BCP 的官方自动更新；第三方包可能带安装脚本与可执行扩展，先审核上游再加载。
+应用声明后，对更改的清单条目运行 `pi install <固定来源>`；新环境可用根 README 的循环安装整份清单。`pi update --extensions` 会跳过精确锁定的 npm 包，不能用于落实改过的版本号。安装后核对实际版本。若使用自定义 agent 目录，安装与启动 Pi 时均设置同一个 `PI_CODING_AGENT_DIR`。`setup --apply` 同时关闭 BCP 的官方自动更新；第三方包可能带安装脚本与可执行扩展，先审核上游再加载。
 
 ## 历史迁移：从 SSH 插件仓库到环境仓库
 

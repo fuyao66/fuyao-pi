@@ -1,8 +1,8 @@
-# Pi SSH Remote — Pi + billion-context-pi 专用版
+# Pi SSH Remote
 
-这是 [fuyao-pi](../../README.zh-CN.md) 的自研 remote-ssh 插件，只服务于当前 Pi agent 的固定组合，不做任意插件的兼容框架。
+这是 [fuyao-pi](../../README.zh-CN.md) 的自研 SSH 工作区桥接插件，不是任意插件兼容框架。
 
-适配基线：**Pi 0.87.1 + billion-context-pi 0.1.82（`billion-context-pi:dist`）**。Pi 构建依赖锁定版本，主机与 worker 的版本和 schema 必须一致；升级后需重新构建和验证。BCP 由本地 agent 加载，不进入远端 worker。
+适配基线：[`config/plugins.json`](../../config/plugins.json) 中的 `piVersion`。Pi 构建依赖锁定版本，主机与 worker 的版本和 schema 必须一致；升级后需重新构建和验证。BCP 是可选的同级插件；同时加载时，它的上下文与压缩工具仍在本地，不进入远端 worker。
 
 ## 执行边界
 

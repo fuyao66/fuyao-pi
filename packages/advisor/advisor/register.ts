@@ -40,6 +40,8 @@ export function registerAdvisorTool(pi: ExtensionAPI, visibleContext: VisibleCon
 	const guidance = validateGuidanceFields(loadAdvisorConfig().guidance);
 	pi.registerTool({
 		name: ADVISOR_TOOL_NAME,
+		// Requires its own transcript call; Codemode/nested calls have no matching entry.
+		exposure: "model-only",
 		label: TOOL_LABEL,
 		description: ADVISOR_DESCRIPTION,
 		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,

@@ -23,6 +23,11 @@ Maintained runtime interface text is **English**. Do not translate user content 
 memory summaries. English and Chinese root documentation should describe the same feature
 set.
 
+Host-provided Pi modules and TypeBox belong in extension `peerDependencies` with a
+`"*"` range, not runtime dependencies. The root workspace dependencies and lockfile
+own the build baseline. A regression test checks local manifests; upstream warnings
+should be fixed in a reviewed update, not hidden by editing installed package files.
+
 ## Development loop
 
 1. Keep each change focused and preserve unrelated work.
@@ -59,15 +64,22 @@ For documentation-only changes, check links, paths and example commands.
 - Keep the installed Pi CLI consistent with root Pi dependencies and
   `config/plugins.json`'s `piVersion`; inspect child peer constraints and any fixed
   handshake/worker runtime expectations too. `setup` does not enforce the CLI version.
+  The official managed installation pins the CLI's transitive tree via its release
+  `package-lock.json`; an exact global npm package version alone does not. Review the
+  installer target against the manifest before switching, and keep the previous
+  executable/profile backup for rollback. Do not run an unreviewed core update.
 - Community packages are pinned in `config/plugins.json`; update them as one reviewed
   profile. BCP's official `autoUpdate` setting is disabled by `bun run setup --apply`;
   use `ACP_AUTO_UPDATE=0` only as a temporary diagnostic override.
 - A companion update changes `config/plugins.json`. Preview `bun run setup`, then apply
-  and run `pi update --extensions` using the correct agent directory. Audit third-party
-  executable/install behavior; a version pin is not a security review.
+  and run `pi install <exact-source>` for each changed manifest entry using the correct
+  agent directory (see the root README loop for a fresh profile). Pi's extension updater
+  skips pinned npm sources; its success message does not prove a changed pin was installed.
+  Verify installed manifests against the profile. Audit third-party executable/install
+  behavior; a version pin is not a security review.
 - Local source derivatives are the second locked class: checked-in source and Git commit
   are authoritative, while `UPSTREAM.md` records imported source and local differences.
-  `pi update` is not an upstream-merge mechanism for code under `packages/`.
+  `pi update --extensions` is not an upstream-merge mechanism for code under `packages/`.
 - Rebuild generated artifacts after relevant runtime changes. Keep `bun.lock` committed;
   never commit `node_modules`, worker binaries or local databases.
 

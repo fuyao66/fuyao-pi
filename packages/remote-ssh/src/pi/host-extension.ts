@@ -4,6 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  ExtensionToolContext,
   ToolInfo,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -419,7 +420,7 @@ export async function installPiRemoteExtension(
           params: unknown,
           signal?: AbortSignal,
           onUpdate?: AgentToolUpdateCallback<unknown>,
-          _ctx?: ExtensionContext,
+          _ctx?: ExtensionToolContext,
         ) => {
           if (tool.name === "read" && localArtifacts.isLocalRead(params)) {
             return createReadToolDefinition(process.cwd()).execute(toolCallId, params as never, signal, onUpdate as never, _ctx!);

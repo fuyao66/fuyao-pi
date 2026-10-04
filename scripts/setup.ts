@@ -175,7 +175,7 @@ export async function setup(
   }
   console.log(backup ? `Backup: ${backup}` : settingsChanged ? "Created settings.json" : "Settings already configured");
   console.log(acpBackup ? `ACP backup: ${acpBackup}` : acpChanged ? `Created ${acpPath}` : "ACP auto-update already disabled");
-  console.log("Settings configured; dependencies have NOT been downloaded. Run pi update --extensions, then restart Pi.");
+  console.log("Settings configured; dependencies have NOT been downloaded. Run pi install <exact-source> for changed manifest entries (pinned npm sources are skipped by pi update --extensions), then restart Pi.");
   return { changed, backup, acpBackup };
 }
 
