@@ -16,6 +16,7 @@ async function fixture(options: { exitTimeoutMs?: number; dispatch?: (command: s
   let remoteState!: ReturnType<typeof getPiRemoteStateForSession>;
   let closed = false;
   let addLocalCompanions = false;
+  const resumed: string[] = [];
   const settingsManager = SettingsManager.inMemory({});
   const resourceLoader = new DefaultResourceLoader({ cwd, agentDir: cwd, settingsManager, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
     extensionFactories: [async (pi) => {
@@ -31,6 +32,8 @@ async function fixture(options: { exitTimeoutMs?: number; dispatch?: (command: s
         Object.assign(remoteState, { selected: true, ownershipVerified: true, scope, assembly, cwd, ready: { tools: assembly.tools } });
       }
       if (options.dispatch) pi.sendUserMessage = options.dispatch;
+      // Record agent resumption instead of starting a real model turn.
+      pi.sendMessage = ((message: { content: unknown }, opts?: { triggerTurn?: boolean }) => { if (opts?.triggerTurn) resumed.push(String(message.content)); }) as never;
       await installPiRemoteExtension(pi, options);
     }],
   });
@@ -45,7 +48,7 @@ async function fixture(options: { exitTimeoutMs?: number; dispatch?: (command: s
     // The interactive host returns without reloading when busy; void is not an acknowledgement.
     reload: async () => { if (!busy && !skipReload) await session.reload(); },
   } });
-  return { session, remoteState, async addCompanions() {
+  return { session, remoteState, resumed, async addCompanions() {
     remoteState.localActiveTools = session.getActiveToolNames();
     addLocalCompanions = true;
     await session.reload();
@@ -115,7 +118,22 @@ test("model exit returns before idle and blocks workspace calls until restoratio
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     expect(await bash(f.session)).toBe("LOCAL_AFTER_EXIT");
+    // The terminated model turn must be resumed after local tools are restored.
+    for (let n = 0; n < 50 && f.resumed.length === 0; n++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.resumed).toHaveLength(1);
+    expect(f.resumed[0]).toContain("remote_exit completed");
   } finally { f.idle(); await f.dispose(); }
+});
+
+test("user /remote-exit does not start an extra model turn", async () => {
+  const f = await fixture();
+  try {
+    f.idle();
+    await f.session.prompt("/remote-exit");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await bash(f.session)).toBe("LOCAL_AFTER_EXIT");
+    expect(f.resumed).toHaveLength(0);
+  } finally { await f.dispose(); }
 });
 
 test("releases a pending exit when asynchronous command dispatch rejects", async () => {
@@ -125,6 +143,8 @@ test("releases a pending exit when asynchronous command dispatch rejects", async
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(f.remoteState.pendingReload).toBeUndefined();
     expect(f.closed).toBe(false);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.resumed.some((text) => text.includes("remote_exit failed"))).toBe(true);
     f.idle();
     await f.session.prompt("/remote-exit");
     expect(await bash(f.session)).toBe("LOCAL_AFTER_EXIT");

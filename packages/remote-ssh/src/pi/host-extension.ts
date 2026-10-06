@@ -40,8 +40,31 @@ type PendingReload = {
   requestId?: string;
   commandScheduled?: boolean;
   commandRunning?: boolean;
+  /** Set when the model requested the exit; its turn was terminated and must be resumed. */
+  resumeAgent?: boolean;
   watchdog?: ReturnType<typeof setTimeout>;
 };
+
+const REMOTE_EXIT_MESSAGE_TYPE = "remote-ssh-exit";
+
+/**
+ * remote_exit terminates the model turn so Pi can become idle and reload. Without a
+ * follow-up turn the conversation silently stops; resume it with an explicit result.
+ */
+function resumeAgentAfterExit(pi: ExtensionAPI, text: string): void {
+  setImmediate(() => {
+    try {
+      void Promise.resolve(
+        pi.sendMessage(
+          { customType: REMOTE_EXIT_MESSAGE_TYPE, content: text, display: true },
+          { triggerTurn: true },
+        ),
+      ).catch(() => {});
+    } catch {
+      // A stale or shut-down runtime cannot resume; the user can continue manually.
+    }
+  });
+}
 
 export function filterStaleRemoteWrappers(
   tools: readonly ToolInfo[],
@@ -709,12 +732,14 @@ export async function installPiRemoteExtension(
       pending.requestId = randomUUID();
       const dispatchCommand = `${command} --request=${pending.requestId}`;
       pending.commandScheduled = true;
+      pending.resumeAgent = true;
       pending.watchdog = setTimeout(() => {
         if (state.pendingReload !== pending || pending.commandRunning) return;
         finishPendingReload(
           state,
           new Error("Remote exit was not accepted by the current Pi turn"),
         );
+        resumeAgentAfterExit(pi, "remote_exit failed: the exit command was not accepted by Pi. The remote workspace is still selected. Retry remote_exit or ask the user to run /remote-exit.");
       }, options.exitTimeoutMs ?? PENDING_RELOAD_TIMEOUT_MS);
       pending.watchdog.unref?.();
       setImmediate(() => {
@@ -728,11 +753,13 @@ export async function installPiRemoteExtension(
           })).catch((error) => {
             if (state.pendingReload === pending) {
               finishPendingReload(state, error);
+              resumeAgentAfterExit(pi, `remote_exit failed: ${error instanceof Error ? error.message : String(error)}. The remote workspace is still selected; retry remote_exit or ask the user to run /remote-exit.`);
             }
           });
         } catch (error) {
           if (state.pendingReload === pending) {
             finishPendingReload(state, error);
+            resumeAgentAfterExit(pi, `remote_exit failed: ${error instanceof Error ? error.message : String(error)}. The remote workspace is still selected; retry remote_exit or ask the user to run /remote-exit.`);
           }
         }
       });
@@ -832,7 +859,11 @@ export async function installPiRemoteExtension(
         }
         return;
       } catch (error) {
+        const resumeAgent = pendingReload.resumeAgent && state.pendingReload === pendingReload;
         finishPendingReload(state, error);
+        if (resumeAgent) {
+          resumeAgentAfterExit(pi, `remote_exit failed: ${error instanceof Error ? error.message : String(error)}. Workspace tools remain blocked until /remote-exit succeeds.`);
+        }
         if (binding.selected || !pendingReload.restored) {
           state.selected = true;
           binding.fail(error);
@@ -973,14 +1004,21 @@ export async function installPiRemoteExtension(
       if (filterStaleRemoteWrappers(allTools).length !== allTools.length) {
         const error = new Error("Pi reload retained remote workspace tools; local restoration was not completed");
         // Do not leave reconnect blocked forever when reload fails partway through.
+        const resumeAgent = state.pendingReload.resumeAgent;
         finishPendingReload(state, error);
+        if (resumeAgent) resumeAgentAfterExit(pi, `remote_exit failed: ${error.message}. Workspace tools remain blocked until /remote-exit succeeds.`);
         state.selected = true;
         state.ownershipVerified = false;
         state.connectionError = error.message;
         binding.fail(error);
         throw error;
       }
+      const resumeAgent = state.pendingReload.resumeAgent;
       finishPendingReload(state);
+      // This is the reloaded extension instance; its pi API is current.
+      if (resumeAgent) {
+        resumeAgentAfterExit(pi, "remote_exit completed: the SSH workspace is disconnected and local tools are restored. Continue the task in the local workspace.");
+      }
     }
   });
 
