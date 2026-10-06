@@ -1,4 +1,4 @@
-import { authorizedSql } from './source-policy.js';
+import { sqlAuthorization, storeChanges } from './source-policy.js';
 import { randomUUID } from "node:crypto";
 import type { MemoryRecord } from "./activity.js";
 import { hash, EmbeddingClient, type EmbeddingConfig, namespace, prepareText, encodeVector, cosineBlob } from "./embeddings.js";
@@ -66,13 +66,25 @@ export class HybridMemory {
   private input(row: any) { return prepareText(`${row.topic ?? ""}\n${row.summary}`, this.config, this.redact); }
   private *rows(project?: string, allowedIds?: number[], authorizedRows?: any[]): Generator<any> {
     if (!this.valid()) throw new Error("Memory embedding operation expired");
-    yield* this.store.db.prepare(`SELECT ${columns}, ${this.hasReferences() ? 'b.msg_ids' : 'NULL'} AS msgIds, v.input_hash AS inputHash, v.dimensions, v.vector, v.truncated
-      FROM blocks b JOIN sources s ON s.source_file=b.source_file
-      LEFT JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=?
-      WHERE 1=1 ${project ? "AND s.project=?" : ""}
-      ${allowedIds !== undefined ? 'AND b.id IN (SELECT value FROM json_each(?))' : ''}
-      ${authorizedRows !== undefined ? `AND ${authorizedSql}` : ''}
-      ORDER BY b.id LIMIT ?`).iterate(this.ns, ...(project ? [project] : []), ...(allowedIds !== undefined ? [JSON.stringify(allowedIds)] : []), ...(authorizedRows !== undefined ? [JSON.stringify(authorizedRows)] : []), this.config.maxBlocks);
+    const policy = sqlAuthorization(this.store.db, allowedIds, authorizedRows);
+    try {
+      // Finish each SQLite statement before yielding: an active cursor would prevent
+      // another operation from dropping its own TEMP policy table on this connection.
+      const statement = this.store.db.prepare(`SELECT ${columns}, ${this.hasReferences() ? 'b.msg_ids' : 'NULL'} AS msgIds,
+        v.input_hash AS inputHash, v.dimensions, v.vector, v.truncated
+        FROM blocks b JOIN sources s ON s.source_file=b.source_file
+        LEFT JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=?
+        WHERE b.id>? ${project ? 'AND s.project=?' : ''} AND ${policy.sql}
+        ORDER BY b.id LIMIT ?`);
+      let after = 0, remaining = this.config.maxBlocks;
+      while (remaining > 0) {
+        const batch = statement.all(this.ns, after, ...(project ? [project] : []), Math.min(32, remaining));
+        if (!batch.length) break;
+        remaining -= batch.length;
+        after = batch[batch.length - 1].id;
+        yield* batch;
+      }
+    } finally { policy.dispose(); }
   }
   private hasReferences(): boolean { return this.store.db.prepare('PRAGMA table_info(blocks)').all().some((c: any) => c.name === 'msg_ids'); }
   vectorState(id: number): "missing" | "stale" | "ready" | "truncated" {
@@ -94,6 +106,23 @@ export class HybridMemory {
       }
     }
     return { total, scanned, indexed, pending: scanned - indexed, truncated, capped: total > scanned };
+  }
+  private scopedTotal(opts: { project?: string; allowedIds?: number[]; authorizedRows?: any[] }): number {
+    const policy = sqlAuthorization(this.store.db, opts.allowedIds, opts.authorizedRows);
+    try { return this.store.db.prepare(`SELECT count(*) AS n FROM blocks b JOIN sources s ON s.source_file=b.source_file
+      WHERE ${policy.sql} ${opts.project ? 'AND s.project=?' : ''}`).get(...(opts.project ? [opts.project] : [])).n; }
+    finally { policy.dispose(); }
+  }
+  private scopedStatus(opts: { project?: string; allowedIds?: number[]; authorizedRows?: any[] }) {
+    const total = this.scopedTotal(opts);
+    let scanned = 0, indexed = 0, truncated = 0;
+    for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
+      scanned++;
+      if (row.vector && row.dimensions === this.config.dimensions && row.inputHash === this.input(row).hash) {
+        try { cosineBlob(row.vector, this.config.dimensions); indexed++; truncated += row.truncated ? 1 : 0; } catch { /* Invalid. */ }
+      }
+    }
+    return { total, scanned, indexed, pending: scanned - indexed, unscanned: total - scanned, truncated, capped: total > scanned };
   }
   async backfill(limit = 20, permissions?: () => Promise<((row: any) => boolean) & { allowedIds?: number[] }>): Promise<{ uploaded: number; stored: number; skipped: number; status: ReturnType<HybridMemory["status"]> }> {
     if (!this.config.enabled) throw new Error("Embedding disabled");
@@ -163,18 +192,42 @@ export class HybridMemory {
     this.searching = true;
     try {
       if (!this.valid() || signal?.aborted) return fallback("Embedding operation expired");
-      // Cheap existence check; scoring streams blobs one at a time below.
-      const hasVectors = this.store.db.prepare(`SELECT 1 FROM memory_vectors v JOIN blocks b ON b.id=v.block_id
-        JOIN sources s ON s.source_file=b.source_file WHERE v.namespace=? ${opts.project ? "AND s.project=?" : ""} LIMIT 1`)
-        .get(this.ns, ...(opts.project ? [opts.project] : []));
-      if (!hasVectors) return fallback("No vectors; open /memory to inspect embedding status or rebuild missing vectors.", this.status(opts.project));
+      if (opts.refreshPolicy) Object.assign(opts, await opts.refreshPolicy());
+      if (!this.valid() || signal?.aborted) return cancelled();
+      // A vector outside the authorized workspace (or stale/corrupt) never justifies query upload.
+      let hasVectors = false;
+      let gateScanned = 0;
+      for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
+        gateScanned++;
+        if (row.vector && row.dimensions === this.config.dimensions && row.inputHash === this.input(row).hash) {
+          try { cosineBlob(row.vector, this.config.dimensions); hasVectors = true; break; } catch { /* Invalid vector. */ }
+        }
+        if (gateScanned % 32 === 0) {
+          await new Promise<void>(resolve => setImmediate(resolve));
+          if (!this.valid() || signal?.aborted) return cancelled();
+        }
+      }
+      // Refresh even on zero-vector fallback: revocation during a yield must not
+      // return historical text using the old authorization snapshot.
+      if (gateScanned >= 32 && opts.refreshPolicy) {
+        Object.assign(opts, await opts.refreshPolicy());
+        if (!this.valid() || signal?.aborted) return cancelled();
+        hasVectors = false;
+        for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
+          if (row.vector && row.dimensions === this.config.dimensions && row.inputHash === this.input(row).hash) {
+            try { cosineBlob(row.vector, this.config.dimensions); hasVectors = true; break; } catch { /* Invalid. */ }
+          }
+        }
+      }
+      if (!hasVectors) return fallback("No valid vectors in the authorized scope; keyword search used.",
+        this.scopedStatus(opts));
       const input = prepareText(query, this.config, this.redact).text;
       const combined = AbortSignal.any([this.controller.signal, ...(signal ? [signal] : [])]);
       const [q] = await this.client.embed([input], combined);
       if (!this.valid() || combined.aborted) return fallback("Embedding operation expired");
       if (opts.refreshPolicy) Object.assign(opts, await opts.refreshPolicy());
       if (!this.valid() || combined.aborted) return fallback("Embedding operation expired");
-      const changesBefore = this.store.db.prepare("SELECT total_changes() AS n").get().n;
+      const changesBefore = storeChanges(this.store.db);
       const top: { row: any; score: number }[] = [];
       let scanned = 0, indexed = 0, truncated = 0;
       for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
@@ -196,22 +249,25 @@ export class HybridMemory {
         }
       }
       const semantic = top.map(x => x.row);
-      const total = this.store.db.prepare(`SELECT count(*) AS n FROM blocks b JOIN sources s ON s.source_file=b.source_file ${opts.project ? "WHERE s.project=?" : ""}`).get(...(opts.project ? [opts.project] : [])).n;
-      const changed = this.store.db.prepare("SELECT total_changes() AS n").get().n !== changesBefore;
+      const total = this.scopedTotal(opts);
+      const changed = storeChanges(this.store.db) !== changesBefore;
       // A concurrent same-connection mutation makes scan counters approximate.
       // Omit rather than claim an impossible indexed/total ratio.
-      const coverage = changed || opts.allowedIds !== undefined ? undefined : { total, scanned, indexed, pending: scanned - indexed, truncated, capped: total > scanned };
+      const coverage = changed ? undefined : { total, scanned, indexed, pending: scanned - indexed,
+        unscanned: total - scanned, truncated, capped: total > scanned };
       // Re-read after HTTP: pruning, ingestion or project metadata can change.
       // Never return a pre-request row whose semantic input/project is now stale.
       if (opts.refreshPolicy) Object.assign(opts, await opts.refreshPolicy());
       if (!this.valid() || combined.aborted) return fallback("Embedding operation expired");
-      const liveSemantic = semantic.flatMap(row => {
+      const finalPolicy = sqlAuthorization(this.store.db, opts.allowedIds, opts.authorizedRows);
+      let liveSemantic: any[];
+      try { liveSemantic = semantic.flatMap(row => {
         if (opts.allowedIds !== undefined && !opts.allowedIds.includes(row.id)) return [];
         const present = this.store.db.prepare(`SELECT ${columns} FROM blocks b JOIN sources s ON s.source_file=b.source_file
-          WHERE b.id=? AND b.source_file=? AND b.block_id=? ${opts.project ? "AND s.project=?" : ""} ${opts.authorizedRows !== undefined ? `AND ${authorizedSql}` : ''}`)
-          .get(row.id, row.sourceFile, row.blockId, ...(opts.project ? [opts.project] : []), ...(opts.authorizedRows !== undefined ? [JSON.stringify(opts.authorizedRows)] : []));
+          WHERE b.id=? AND b.source_file=? AND b.block_id=? ${opts.project ? "AND s.project=?" : ""} AND ${finalPolicy.sql}`)
+          .get(row.id, row.sourceFile, row.blockId, ...(opts.project ? [opts.project] : []));
         return present && this.input(present).hash === row.inputHash ? [present] : [];
-      });
+      }); } finally { finalPolicy.dispose(); }
       const liveLexical = this.store.search(query, { ...opts, limit: 20 }).rows;
       return { mode: "hybrid", rows: fuse(liveLexical, liveSemantic, limit), coverage,
         ...(changed ? { reason: "Store changed during semantic scan; coverage omitted" } : {}),

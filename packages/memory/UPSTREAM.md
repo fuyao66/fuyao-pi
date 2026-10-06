@@ -15,7 +15,12 @@ feedback is a single line. Old subcommand arguments are rejected; menu uploads a
 pruning require confirmation. `src/compression-scan.ts` schedules indexing after
 compression without waiting for the entire agent run. `src/project-scope.ts` and
 `src/source-policy.ts` provide conservative workspace attribution and shared source,
-block and revision authorization. Ingestion now synchronizes revisions transactionally,
+block and revision authorization. Authorization snapshots use indexed temporary SQL
+relations; `src/source-cache.ts` caches parsed documents with bounded size and metadata
+invalidation while rules/listing refresh. BCP version and literal source-prefix checks
+reject unsupported formats and traversal/symlinks. `src/snippets.ts` provides bounded
+query-centered excerpts. Semantic queries require a valid authorized vector and report
+scope-specific coverage, with keyword fallback. Ingestion now synchronizes revisions transactionally,
 including FTS updates and content-dependent vector invalidation. Upstream allow-list,
 lexical lookup, expansion, watermarks and durable pruning are retained and adapted. Source loading replaces upstream's bundled
 Git-distribution workflow. See [README.md](README.md) for the fork contract.
@@ -36,7 +41,8 @@ Only redacted, path-stripped stored topic/summary prefixes and queries are sent.
 This is best-effort sanitization, **not a guarantee that summaries contain no
 sensitive information**. No raw messages, expanded messages, source file paths,
 or whole sessions are sent to the embedding service. Optional upstream
-`memory_expand` still reads local raw messages when explicitly enabled; it is not
+`memory_expand` remains opt-in: its `summary` mode reads bounded, revision-bound
+pages from the stored summary; `list`/`full` read local original messages. Neither is
 used for embedding. This enhancement adds no BCP context hooks or compression
 algorithm changes.
 

@@ -53,9 +53,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { hash, loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory, ensureVectorSchema } from "./hybrid.js";
+import { realSourcePath, readSourceFile } from './source-files.js';
+import { summaryPage } from './summary-read.js';
+import { summarySnippet } from './snippets.js';
+import { SourceCache } from './source-cache.js';
 import { AutoEmbed } from "./auto-embed.js";
 import { CompressionScan } from "./compression-scan.js";
-import { SourcePolicy, sourceKey, authorizedSql, type SourceDocument } from "./source-policy.js";
+import { SourcePolicy, sourceKey, sqlAuthorization, type SourceDocument } from "./source-policy.js";
 import { ensureProjectSchema, recordMessageProjects, assignBlockProjects, readProjectScope, scopeAllowedIds } from "./project-scope.js";
 import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
 import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
@@ -85,9 +89,9 @@ const DEFAULT_CFG = {
   /** Log file (overridable so tests never write to the real ~/.pi log) */
   logPath: path.join(PI_DIR, "pi-billion-memory.log"),
   /**
-   * Register the `memory_expand` tool, which resolves a stored block back to the original
-   * session messages it absorbed. Off by default: expansion re-reads raw conversation lines,
-   * which the ingestion path deliberately never touches, so it must be enabled on purpose.
+   * Register `memory_expand`: bounded stored-summary pages or original session messages.
+   * Off by default because list/full expose raw conversation text; summary mode does not
+   * expand original messages. Enable intentionally to expose all three modes.
    */
   expandEnabled: false,
   /** Hard cap on characters returned by one `memory_expand` call. */
@@ -499,13 +503,21 @@ async function walkGlob(dir, re, budget, errors, prefix = "") {
  */
 export async function listSourceFiles(source) {
   const errors = [];
+  try { await realSourcePath(source.root); } catch (error) { return { files: [], errors: [error] }; }
   const segs = String(source.pattern).split(/[\\/]/).filter(Boolean);
+  if (path.isAbsolute(String(source.pattern)) || /^[A-Za-z]:/.test(String(source.pattern)) || segs.some(part => part === '..' || part === '.')) {
+    return { files: [], errors: [new Error('Source pattern must stay relative to its root without traversal')] };
+  }
   const filePattern = segs.pop() || source.pattern;
   // A literal directory prefix is a starting point, not a file name: "sub/*.json" must scan
   // `<root>/sub`, not `<root>` recursively.
   let start = source.root;
   while (segs.length && !segs[0].includes("*")) {
     start = path.join(start, segs.shift());
+    try {
+      const stat = await fs.promises.lstat(start);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return { files: [], errors: [new Error('Source prefix must contain real directories, not symlinks')] };
+    } catch (error) { return { files: [], errors: [error] }; }
   }
   if (segs.length === 0) {
     const re = globToRegExp(filePattern);
@@ -578,9 +590,17 @@ export function collectMsgIds(block: any): string[] | null {
   return out.length ? out : null;
 }
 
+const unsupportedSchemas = new Set<string>();
 function normalizePiBlocks(data: any) {
-  // null = unrecognized payload shape: the caller must not advance the watermark (retry later)
+  // Missing version means legacy v1. Unknown versions must not advance the watermark.
   if (!data || typeof data !== "object" || !Array.isArray(data.blocks)) return null;
+  if (data.schemaVersion !== undefined && data.schemaVersion !== 1) {
+    const key = String(data.schemaVersion).replace(/[\r\n\x00-\x1f]/g, '').slice(0, 40);
+    if (!unsupportedSchemas.has(key)) {
+      if (unsupportedSchemas.size < 100) { unsupportedSchemas.add(key); logLine(`Skipping unsupported BCP sidecar schema version ${key}`); }
+    }
+    return null;
+  }
   const out: any[] = [];
   for (const b of data.blocks) {
     if (!b || (typeof b.blockId !== "string" && typeof b.blockId !== "number") || typeof b.summary !== "string")
@@ -882,6 +902,7 @@ export class MemoryDb {
     const onStored = this.onStored;
     this.open();
     try {
+      await realSourcePath(sourceFile);
       await fs.promises.access(sourceFile);
     } catch {
       return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs: 0, size: 0, error: "no source file" };
@@ -931,7 +952,9 @@ export class MemoryDb {
     }
     let data;
     try {
-      data = JSON.parse(await fs.promises.readFile(sourceFile, "utf8"));
+      const read = await readSourceFile(sourceFile);
+      if (read.stat.mtimeMs !== mtimeMs || read.stat.size !== size) throw new Error('Source changed during ingestion');
+      data = JSON.parse(read.body);
     } catch (e) {
       // Possibly mid-write by another process: leave watermark untouched, retry next scan
       return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs, size, error: `parse: ${e.message}` };
@@ -1066,10 +1089,10 @@ export class MemoryDb {
   findBlocks(blockId, source = null, limit = 10, allowedIds?: number[], authorizedRows?: any[]) {
     this.open();
     let { where, params } = blockFilter(blockId, source);
-    if (allowedIds !== undefined) { where += ' AND b.id IN (SELECT value FROM json_each(?))'; params.push(JSON.stringify(allowedIds)); }
-    if (authorizedRows !== undefined) { where += ` AND ${authorizedSql}`; params.push(JSON.stringify(authorizedRows)); }
+    const policy = sqlAuthorization(this.db, allowedIds, authorizedRows);
+    where += ` AND ${policy.sql}`;
     params.push(Math.max(1, Math.min(50, limit)));
-    return this.db
+    try { return this.db
       .prepare(
         `SELECT b.id, b.source_file AS sourceFile, b.kind AS kind,
                 b.block_id AS blockId, b.tier, b.topic, b.summary,
@@ -1081,7 +1104,7 @@ export class MemoryDb {
           ORDER BY b.created_at DESC, b.id DESC
           LIMIT ?`,
       )
-      .all(...params);
+      .all(...params); } finally { policy.dispose(); }
   }
 
   /**
@@ -1146,11 +1169,7 @@ export class MemoryDb {
       where += " AND s.project = ?";
       params.push(project);
     }
-    if (opts.authorizedRows !== undefined) { where += ` AND ${authorizedSql}`; params.push(JSON.stringify(opts.authorizedRows)); }
-    if (opts.allowedIds !== undefined) {
-      where += " AND b.id IN (SELECT value FROM json_each(?))";
-      params.push(JSON.stringify(opts.allowedIds));
-    }
+    if (opts.policySql) where += ` AND ${opts.policySql}`;
     params.push(limit);
     const mode = useFts ? (likeTokens.length ? "mixed" : "fts") : "like";
     const from = useFts
@@ -1181,24 +1200,28 @@ export class MemoryDb {
    */
   search(query, opts: any = {}) {
     this.open();
-    const built = this._buildSearch(query, opts);
-    if (built.mode === "empty") return { mode: "empty", rows: [] };
+    const policy = sqlAuthorization(this.db, opts.allowedIds, opts.authorizedRows);
+    const built = this._buildSearch(query, { ...opts, policySql: policy.sql });
     let rows = [];
     try {
+      if (built.mode === "empty") return { mode: "empty", rows: [] };
       rows = this.db.prepare(built.sql).all(...built.params);
     } catch (e) {
       logLine(`search error: ${withoutPaths(e.message)} | sql=${built.sql}`);
       rows = [];
-    }
+    } finally { policy.dispose(); }
     return { mode: built.mode, rows };
   }
 
   /** EXPLAIN QUERY PLAN for the same SQL as search(); used by tests to lock the LIKE plan. */
   explainSearch(query, opts: any = {}) {
     this.open();
-    const built = this._buildSearch(query, opts);
-    if (built.mode === "empty") return [];
-    return this.db.prepare(`EXPLAIN QUERY PLAN ${built.sql}`).all(...built.params);
+    const policy = sqlAuthorization(this.db, opts.allowedIds, opts.authorizedRows);
+    try {
+      const built = this._buildSearch(query, { ...opts, policySql: policy.sql });
+      if (built.mode === "empty") return [];
+      return this.db.prepare(`EXPLAIN QUERY PLAN ${built.sql}`).all(...built.params);
+    } finally { policy.dispose(); }
   }
 
   stats() {
@@ -1574,6 +1597,7 @@ export function scanAll(force = false) {
 
 /** Scan only the current pi session's sidecar (called on settle / shutdown — cheap) */
 /** @internal */
+const policyDocuments = new SourceCache();
 export async function buildSourcePolicy(): Promise<SourcePolicy> {
   const generation = sessionGeneration;
   const store = getDb(); store.open();
@@ -1600,19 +1624,20 @@ export async function buildSourcePolicy(): Promise<SourcePolicy> {
       const key = sourceKey(file, kind);
       if (documents.has(key)) continue;
       try {
-        const data = JSON.parse(await fs.promises.readFile(file, 'utf8'));
-        const parsed = kind === 'pi' ? normalizePiBlocks(data) : kind === 'opencode' ? normalizeOpencodeBlocks(data) : normalizeBiliBlocks(data);
-        if (!parsed) { documents.set(key, { state: 'missing/unreadable' }); continue; }
-        const blocks = new Map();
-        for (const b of parsed) {
-          const summary = redactSecrets(b.summary).text.slice(0, cfg.maxSummaryChars);
-          if (!summary.trim()) continue;
-          blocks.set(b.blockId, { blockId: b.blockId, summary,
-            topic: b.topic ? redactSecrets(b.topic).text : null,
-            msgIds: b.msgIds?.length ? JSON.stringify(b.msgIds) : null,
-            refStart: b.refStart, refEnd: b.refEnd });
-        }
-        documents.set(key, { state: 'loaded', blocks });
+        documents.set(key, await policyDocuments.read(key + ':' + cfg.maxSummaryChars, file, data => {
+          const parsed = kind === 'pi' ? normalizePiBlocks(data) : kind === 'opencode' ? normalizeOpencodeBlocks(data) : normalizeBiliBlocks(data);
+          if (!parsed) return { state: 'missing/unreadable' };
+          const blocks = new Map();
+          for (const b of parsed) {
+            const summary = redactSecrets(b.summary).text.slice(0, cfg.maxSummaryChars);
+            if (!summary.trim()) continue;
+            blocks.set(b.blockId, { blockId: b.blockId, summary,
+              topic: b.topic ? redactSecrets(b.topic).text : null,
+              msgIds: b.msgIds?.length ? JSON.stringify(b.msgIds) : null,
+              refStart: b.refStart, refEnd: b.refEnd });
+          }
+          return { state: 'loaded', blocks };
+        }));
       } catch { documents.set(key, { state: 'missing/unreadable' }); }
       if (generation !== sessionGeneration || dbClosed) throw new Error('Memory policy session expired');
     }
@@ -1653,9 +1678,9 @@ function sourceLabel(row) {
 }
 
 /** @internal */
-export function formatResults(res) {
+export function formatResults(res, query = '') {
   const rows = res.rows;
-  const info = res.coverage ? `Vector coverage: ${res.coverage.indexed}/${res.coverage.total} blocks; truncated inputs: ${res.coverage.truncated}${res.coverage.capped ? "; oldest-block scan cap reached" : ""}.\n` : "";
+  const info = res.coverage ? `Vector coverage: ${res.coverage.indexed}/${res.coverage.total} authorized blocks; scanned: ${res.coverage.scanned}; pending in scan: ${res.coverage.pending}; truncated inputs: ${res.coverage.truncated}${res.coverage.capped ? `; oldest-block scan cap reached, ${res.coverage.unscanned ?? res.coverage.total - res.coverage.scanned} not scanned` : ""}.\n` : "";
   const diagnostic = `${info}${res.reason ? res.reason + ".\n" : ""}${res.queryTruncated ? "Query embedding input truncated.\n" : ""}`;
   if (rows.length === 0) {
     return (
@@ -1678,8 +1703,7 @@ export function formatResults(res) {
     const tm = fmtTs(r.createdAt);
     const refs = r.refStart ? ` [${r.refStart}${r.refEnd && r.refEnd !== r.refStart ? "–" + r.refEnd : ""}]` : "";
     const topic = r.topic ? `Topic: ${r.topic}\n` : "";
-    let summary = r.summary || "";
-    if (summary.length > PREVIEW_CHARS) summary = summary.slice(0, PREVIEW_CHARS) + "…";
+    let summary = summarySnippet(r.summary || '', query, PREVIEW_CHARS);
     summary = summary.replace(/\n{3,}/g, "\n\n").trim();
     return (
       `[${i + 1}] project ${project} · ${tm || "time unknown"} · ${r.blockId || ""}` +
@@ -1794,9 +1818,9 @@ const MEMORY_EXPAND_PARAMETERS = {
     },
     mode: {
       type: "string",
-      enum: ["list", "full"],
+      enum: ["list", "full", "summary"],
       description:
-        "'list' (default) returns a manifest of the absorbed messages with no conversation text; 'full' renders exactly the indices given in 'select'",
+        "'list' (default) lists original messages; 'full' reads explicit message indices; 'summary' reads the stored summary without opening raw session logs",
     },
     select: {
       type: "array",
@@ -1805,7 +1829,9 @@ const MEMORY_EXPAND_PARAMETERS = {
         "1-based message indices taken from a 'list' result; required (and non-empty) for mode 'full', which never renders a whole block at once",
     },
     limit: { type: "number", description: "Max messages to render, default from expandMaxMessages" },
-    chars: { type: "number", description: "Max characters to return, default from expandMaxChars" },
+    chars: { type: "number", description: "Max content characters (UTF-16 units), capped by expandMaxChars; summary defaults to at most 6000" },
+    offset: { type: "integer", minimum: 0, description: "Summary-only offset; start at 0, then use nextOffset" },
+    revision: { type: "string", description: "Summary-only revision from the first page; required for continuation" },
   },
   required: ["block"],
 } as const;
@@ -1813,7 +1839,9 @@ const MEMORY_EXPAND_PARAMETERS = {
 interface MemoryExpandParams {
   block: string;
   source: string | null;
-  mode: "list" | "full";
+  mode: "list" | "full" | "summary";
+  offset: number;
+  revision: string | null;
   select: number[] | null;
   limit: number | null;
   chars: number | null;
@@ -1823,7 +1851,11 @@ function readMemoryExpandParams(raw: unknown): MemoryExpandParams {
   const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const block = typeof value.block === "string" ? value.block.trim() : "";
   const source = typeof value.source === "string" && value.source.trim() ? value.source.trim() : null;
-  const mode = value.mode === "full" ? "full" : "list";
+  const mode = value.mode === "summary" ? "summary" : value.mode === "full" ? "full" : "list";
+  if (mode === 'summary' && value.offset !== undefined && (!Number.isSafeInteger(value.offset) || Number(value.offset) < 0))
+    throw new Error('Summary offset must be a nonnegative safe integer');
+  const offset = mode === 'summary' && typeof value.offset === 'number' ? value.offset : 0;
+  const revision = typeof value.revision === 'string' ? value.revision : null;
   const select = Array.isArray(value.select)
     ? value.select.filter((n) => typeof n === "number" && Number.isInteger(n) && n > 0)
     : null;
@@ -1831,7 +1863,7 @@ function readMemoryExpandParams(raw: unknown): MemoryExpandParams {
     typeof value.limit === "number" && Number.isInteger(value.limit) && value.limit > 0 ? value.limit : null;
   const chars =
     typeof value.chars === "number" && Number.isInteger(value.chars) && value.chars > 0 ? value.chars : null;
-  return { block, source, mode, select, limit, chars };
+  return { block, source, mode, offset, revision, select, limit, chars };
 }
 
 function readMemorySearchParams(raw: unknown): MemorySearchParams {
@@ -2001,6 +2033,7 @@ export default async function factory(pi: ExtensionAPI) {
     cards?.stop(); cards = null;
     if (db) db.onStored = undefined;
     stopEmbedding();
+    policyDocuments.clear();
     const shutdownGeneration = ++sessionGeneration; // invalidate in-flight background scan continuations
     const inflight = backgroundScan;
     if (inflight) {
@@ -2081,7 +2114,7 @@ export default async function factory(pi: ExtensionAPI) {
           : getDb().search(query, { project, limit, allowedIds, authorizedRows });
         if (generation !== sessionGeneration || dbClosed) throw new Error("Memory search session expired");
         if (readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp) throw new Error('Memory workspace changed during search');
-        const text = formatResults(res) + (!all && res.rows.length === 0 ? '\nCurrent-workspace scope excludes legacy, mixed or unknown project history. For an explicit wider lookup use scope: "all".' : '');
+        const text = formatResults(res, query) + (!all && res.rows.length === 0 ? '\nCurrent-workspace scope excludes legacy, mixed or unknown project history. For an explicit wider lookup use scope: "all".' : '');
         return {
           content: [{ type: "text", text }],
           details: { mode: res.mode, hits: res.rows.length, dbPath: path.basename(cfg.dbPath), ...("coverage" in res ? { coverage: res.coverage } : {}) },
@@ -2106,21 +2139,24 @@ export default async function factory(pi: ExtensionAPI) {
       name: "memory_expand",
       label: "Memory Expand",
       description:
-        "Recover the original session messages absorbed by one stored compression block — the " +
-        "inverse of memory_search. Only registered when expandEnabled is true in " +
+        "Read a stored compression summary (mode 'summary') or recover its original session messages. " +
+        "Only registered when expandEnabled is true in " +
         "~/.pi/pi-billion-memory.json. Default mode 'list' returns just a manifest (ref, role, size); " +
-        "call again with mode 'full' and an explicit 'select' to read text. Expansion is deliberately " +
+        "call again with mode 'full' and an explicit 'select' to read original text. Mode 'summary' " +
+        "returns bounded stored-summary pages; continuations require nextOffset and revision. Raw expansion is " +
         "two-step and bounded, because it spends the context that compression saved. Returned text " +
         "passes through the same secret redaction as ingestion, and nothing is written to the store.",
-      promptSnippet: "Expand one memory block back to its original messages (opt-in; list before full)",
+      promptSnippet: "Read a memory summary or recover original messages (opt-in; list before full)",
       promptGuidelines: [
-        "Use mode 'list' first: it is cheap and shows which messages a block absorbed, with role and size.",
+        "Use mode 'summary' after search when the preview is insufficient; continue with nextOffset and revision only as needed.",
+        "For raw messages, use mode 'list' first: it shows which messages a block absorbed, with role and size.",
         "Request mode 'full' with a narrow 'select' only when the exact original wording matters.",
         "memory_expand reads raw conversation lines from the session file; it only resolves references already recorded in a stored block.",
       ],
       parameters: MEMORY_EXPAND_PARAMETERS,
       async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
         try {
+          if (_signal?.aborted) throw new Error('Memory expansion cancelled');
           const p = readMemoryExpandParams(params);
           if (!p.block) {
             return {
@@ -2172,6 +2208,27 @@ export default async function factory(pi: ExtensionAPI) {
             };
           }
           const row = rows[0];
+          if (p.mode === 'summary') {
+            const page = summaryPage(String(row.summary ?? ''), { offset: p.offset,
+              chars: Math.min(cfg.expandMaxChars, p.chars ?? 6000), revision: p.revision });
+            const finalPolicy = await buildSourcePolicy();
+            if (_signal?.aborted) throw new Error('Memory expansion cancelled');
+            if (generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp ||
+                !scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all).includes(row.id) || !finalPolicy.allows(row))
+              throw new Error('Memory summary source or workspace changed or is no longer allowed');
+            // Verify the database still holds this authorized revision after the async refresh.
+            const latest = db.findBlocks(p.block, p.source, 50, [row.id], finalPolicy.authorizedRows)[0];
+            if (!latest || latest.summary !== row.summary) throw new Error('Memory summary changed; search again');
+            return {
+              content: [{ type: 'text', text: `Summary ${row.blockId}\nSource: ${sourceLabel(row)}\n` +
+                `Revision: ${page.revision}\nCharacters: ${page.offset}–${page.offset + page.returnedChars}/${page.totalChars}\n` +
+                (page.nextOffset === null ? 'End of summary.\n' : `Continue: mode=summary offset=${page.nextOffset} revision=${page.revision}\n`) +
+                '\n' + page.text }],
+              details: { mode: 'summary', block: row.blockId, source: sourceLabel(row), hits: 1,
+                revision: page.revision, offset: page.offset, nextOffset: page.nextOffset,
+                totalChars: page.totalChars, returnedChars: page.returnedChars },
+            };
+          }
           if (!String(row.sourceFile).endsWith(".acp.json")) {
             return {
               content: [
@@ -2390,6 +2447,7 @@ export default async function factory(pi: ExtensionAPI) {
 
 /** @internal */
 export function configureForTests(over: Record<string, unknown>): void {
+  policyDocuments.clear();
   cfg = { ...cfg, ...sanitizeCfg(over) };
   syncLogPath();
   piMapCache = null;

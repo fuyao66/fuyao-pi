@@ -100,7 +100,7 @@ BCP normally awaits atomic sidecar persistence before returning (persistence err
 扫描、补建、来源和清理；补建数量通过输入框指定 1–100 条，清理保留天数为 0–36500。
 上传和删除均需确认；保留 0 天删除所有带时间戳的摘要，不删除原始会话。
 RPC/无终端面板时 `/memory` 返回简短状态；不会创建 TUI 组件。
-模型工具 `memory_search` 和可选的 `memory_expand` 保持不变。
+模型工具仍为 `memory_search` 和可选的 `memory_expand`；后者支持读取摘要的 `summary` 模式及原文的 `list` / `full` 模式。
 
 `autoBackfill:true` 是对自动摘要上传的明确授权：启动扫描完成后，后台每批补建最多 20 条，
 批间至少等待 1 秒，不阻塞聊天。之后 `compress` 完成扫描、`agent_settled` 兜底扫描、搜索前扫描和 rescan
@@ -120,8 +120,8 @@ BCP 子代理（`PI_ACP_DELEGATE_DEPTH>0`）不启动自动任务。自动上传
 让出事件循环；每个实例同时只进行一次语义查询，其余调用走关键词回退。
 补建只处理通过来源校验后按数据库 id 排序最早的 `maxBlocks` 块，
 默认/硬上限为 10000；后续块不会因重复 backfill 自动进入这一区间。项目过滤搜索时也只
-扫描该项目最早的 `maxBlocks` 块。超过上限会显示覆盖率截断，需清理旧记录或后续升级
-分页索引。这是初版明确的容量限制，不是无限增量索引或百万记录 ANN 系统。
+扫描该项目最早的 `maxBlocks` 块。超过上限会显示当前授权范围的覆盖率与未扫描数量；扩容需要后续升级
+分页索引，不建议靠删除仍有价值的旧记忆腾位置。这是初版明确的容量限制，不是无限增量索引或百万记录 ANN 系统。
 
 ## Workspace scope and source policy
 
@@ -138,7 +138,7 @@ for project attribution only. This is conservative retrieval isolation, not a sa
 Use `scope: "all"` deliberately to retrieve legacy history. No old rows are relabeled
 from `sources.cwd`; project display names are not identity keys.
 
-Search, raw expansion and automatic/manual embedding all validate enabled sources,
+Search, summary/raw expansion and automatic/manual embedding all validate enabled sources,
 file format, block presence and the stored content/reference revision. Inactive BCP
 child blocks remain valid if still present. Revoked, missing, unreadable, absent or stale
 records stay in the database but are excluded from tools/uploads; the management browser
@@ -146,8 +146,53 @@ shows the policy and attribution status. Validation is an operation snapshot, no
 atomic filesystem lock: revocation cannot recall an already dispatched HTTP request.
 Version checks occur before result limits and each embedding network chunk; expansion
 revalidates after reading. Keyword search remains available with embeddings disabled.
-Policy-filtered semantic results currently omit global vector coverage rather than
-misreport an unfiltered total. Global `/memory` coverage includes retained excluded rows.
+Semantic results report coverage for the authorized workspace: valid vectors, scanned
+pending blocks and unscanned blocks when capped. No valid vector in that scope means
+no query embedding request. Concurrent store changes can suppress coverage rather than
+claim a misleading ratio. Global `/memory` coverage includes retained excluded rows.
+
+Authorization uses an indexed, operation-local SQLite temporary relation, not repeated
+JSON-array scans. Parsed source documents use a bounded metadata-validated cache;
+source rules and file listing are still refreshed, including around network requests.
+BCP schema v1 and unversioned legacy sidecars are supported; unknown versions are
+skipped and logged without advancing ingestion watermarks. Source patterns must be
+relative and cannot contain `.`/`..`; literal directory prefixes must be real directories,
+not symlinks. These checks do not provide an atomic filesystem security boundary.
+
+Search previews are bounded to about 600 characters and prefer an exact query term's
+neighborhood, so a match near the summary tail is readable. Semantic-only matches with
+no literal query term still show the opening preview. Full summaries are available
+in `/memory` and through the optional `memory_expand` tool's `summary` mode.
+
+### Read a stored summary
+
+When `expandEnabled: true` is set in the local Memory configuration, use the existing
+tool without opening raw session logs:
+
+```text
+memory_expand({ block: "b1", source: "session-label", mode: "summary", chars: 6000 })
+```
+
+The tool returns a bounded stored-summary page, `revision` and `nextOffset`. If another
+page is needed, keep the same block/source/scope and pass both returned values:
+
+```text
+memory_expand({ block: "b1", source: "session-label", mode: "summary", offset: 6000, revision: "<returned revision>" })
+```
+
+Use the actual `nextOffset`, not a guessed offset: offsets count UTF-16 units and pages
+do not split surrogate pairs. The default content cap is `min(6000, expandMaxChars)`;
+explicit `chars` is still capped by `expandMaxChars` (metadata is additional).
+Continuations reject changed summary content; restart at offset 0 to read its new version.
+This also works for authorized summaries without message references or original logs.
+Current workspace is the default; legacy/cross-project records require explicit `scope: "all"`.
+Source, revision and workspace are revalidated before return; cancellation returns no page.
+`expandEnabled` remains false by default, and `list` remains the default mode. Raw
+expansion still uses `list` followed by `full` with explicit `select`; summary mode
+adds no tool and does not call an embedding or chat provider.
+
+Pruning removes the local index/vectors and records path-based tombstones; it does not
+erase original sessions, and copied/renamed sources may be indexed again.
 
 ## 项目集成与验证
 
