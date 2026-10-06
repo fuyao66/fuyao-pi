@@ -125,6 +125,28 @@ test("model exit returns before idle and blocks workspace calls until restoratio
   } finally { f.idle(); await f.dispose(); }
 });
 
+test("remote_exit in a mixed tool batch skips siblings so the turn can end", async () => {
+  const f = await fixture();
+  try {
+    await f.session.extensionRunner.emit({ type: "message_end", message: { role: "assistant", content: [
+      { type: "toolCall", id: "exit-1", name: "remote_exit", arguments: {} },
+      { type: "toolCall", id: "bash-1", name: "bash", arguments: { command: "touch x" } },
+    ] } } as never);
+    const sibling = await f.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "bash", toolCallId: "bash-1", input: { command: "touch x" } } as never);
+    expect(sibling).toMatchObject({ block: true, terminate: true });
+    expect(sibling?.reason).toContain("remote_exit must be called alone");
+    // remote_exit itself is not blocked by the batch guard.
+    const exitGate = await f.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "remote_exit", toolCallId: "exit-1", input: {} } as never);
+    expect(exitGate?.block).not.toBe(true);
+    // A later batch without remote_exit is unaffected.
+    await f.session.extensionRunner.emit({ type: "message_end", message: { role: "assistant", content: [
+      { type: "toolCall", id: "bash-2", name: "bash", arguments: { command: "true" } },
+    ] } } as never);
+    const later = await f.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "bash", toolCallId: "bash-2", input: { command: "true" } } as never);
+    expect(later?.block).not.toBe(true);
+  } finally { f.idle(); await f.dispose(); }
+});
+
 test("user /remote-exit does not start an extra model turn", async () => {
   const f = await fixture();
   try {

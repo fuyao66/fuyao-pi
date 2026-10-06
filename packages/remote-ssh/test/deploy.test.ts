@@ -35,7 +35,7 @@ describe("remote bundle deployment", () => {
       const ssh = join(f.bin, "ssh");
       await writeFile(ssh, "#!/bin/sh\nprintf 'unexpected-banner\\n'\n");
       await expect(prepareRemoteWorker(f.options, f.bundle)).rejects.toThrow("Invalid remote platform probe response");
-      await writeFile(ssh, `#!/bin/sh\nfor arg do command=$arg; done\ncase "$command" in uname*) printf 'Linux\\nx86_64\\n/tmp' ;; *) printf 'unexpected-banner' ;; esac\n`);
+      await writeFile(ssh, `#!/bin/sh\nfor arg do command=$arg; done\ncase "$command" in *uname*) printf 'Linux\\nx86_64\\n/tmp' ;; *) printf 'unexpected-banner' ;; esac\n`);
       await expect(prepareRemoteWorker(f.options, f.bundle)).rejects.toThrow("Unexpected remote worker check response");
     } finally { await f.close(); }
   });
@@ -92,6 +92,22 @@ describe("remote worker platform mapping", () => {
 
   test("maps Linux/x86_64 to x64 worker", () => {
     expect(SUPPORTED_PLATFORMS["Linux/x86_64"]).toBe("x64");
+  });
+
+  test("every remote script runs under sh and survives a fish login shell", async () => {
+    const f = await deploymentFixture();
+    try {
+      await rm(join(f.workerDir, "worker-linux-x64"));
+      await rm(join(f.companionDir, "photon.wasm"));
+      await prepareRemoteWorker(f.options, f.bundle);
+      const scripts = await f.scripts();
+      expect(scripts.length).toBeGreaterThan(4);
+      for (const script of scripts) {
+        // Only `sh -c '<script>'` reaches the login shell; fish reads backslashes in quotes.
+        expect(script.startsWith("sh -c '")).toBe(true);
+        expect(script.includes("\\")).toBe(false);
+      }
+    } finally { await f.close(); }
   });
 
   test("rejects unsupported platforms", () => {

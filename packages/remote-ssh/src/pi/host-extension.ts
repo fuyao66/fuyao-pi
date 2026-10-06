@@ -711,7 +711,7 @@ export async function installPiRemoteExtension(
     name: "remote_exit",
     label: "Remote Exit",
     description:
-      "Queue a graceful remote disconnect and rebuild the local Pi tool set.",
+      "Queue a graceful remote disconnect and rebuild the local Pi tool set. Call it alone: other tool calls in the same message are skipped, and the conversation resumes automatically once local tools are restored.",
     parameters: Type.Object({
       force: Type.Optional(Type.Boolean()),
     }),
@@ -727,6 +727,8 @@ export async function installPiRemoteExtension(
         return {
           content: [{ type: "text", text: "Remote exit is already pending." }],
           details: { queued: false, command },
+          // Keep the turn ending so the already-queued exit can run.
+          terminate: true,
         } as never;
       }
       pending.requestId = randomUUID();
@@ -907,7 +909,24 @@ export async function installPiRemoteExtension(
     return { isError };
   });
 
+  // Pi ends a turn only when every result in the tool batch sets terminate. If
+  // remote_exit shares a batch, skip the siblings (with terminate) so the turn can
+  // end, Pi becomes idle and the exit runs instead of timing out.
+  let exitBatchSiblings = new Set<string>();
+  pi.on("message_end", (event) => {
+    const message = event.message as { role?: string; content?: unknown };
+    if (message.role !== "assistant" || !Array.isArray(message.content)) return;
+    const calls = message.content.filter((part): part is { type: "toolCall"; id: string; name: string } =>
+      !!part && typeof part === "object" && (part as { type?: unknown }).type === "toolCall");
+    exitBatchSiblings = calls.some((call) => call.name === "remote_exit")
+      ? new Set(calls.filter((call) => call.name !== "remote_exit").map((call) => call.id))
+      : new Set();
+  });
+
   pi.on("tool_call", (event, ctx) => {
+    if (exitBatchSiblings.delete(event.toolCallId)) {
+      return { block: true, terminate: true, reason: "Skipped: remote_exit must be called alone. Retry this call after the exit completes and local tools are restored." };
+    }
     if ((state.selected || state.pendingReload) && event.toolName === "powershell") return { block: true, reason: "PowerShell is not supported by the Linux SSH worker; local execution is blocked." };
     if (state.selected && event.toolName === "acp_delegate") {
       try { verifyOwnership(); } catch { /* Report the unavailable workspace below. */ }

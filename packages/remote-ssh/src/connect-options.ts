@@ -119,68 +119,31 @@ async function readHostFile(path: string): Promise<ConfiguredSshHost[]> {
     normalizeHost(name, value, path),
   );
 }
-async function readSshConfigFile(configPath: string): Promise<ConfiguredSshHost[]> {
-  try {
-    const text = await readFile(configPath, "utf8");
-    const hosts: ConfiguredSshHost[] = [];
-    let currentHost: Partial<ConfiguredSshHost> | null = null;
-
-    for (const rawLine of text.split("\n")) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) continue;
-      const parts = line.split(/\s+/);
-      const key = parts[0]?.toLowerCase();
-      const val = parts.slice(1).join(" ");
-
-      if (key === "host") {
-        if (currentHost?.name && currentHost.host) {
-          hosts.push(currentHost as ConfiguredSshHost);
-        }
-        if (val && !val.includes("*") && !val.includes("?")) {
-          currentHost = { name: val, host: val };
-        } else {
-          currentHost = null;
-        }
-      } else if (currentHost) {
-        if (key === "hostname") currentHost.host = val;
-        else if (key === "user") currentHost.username = val;
-        else if (key === "port") currentHost.port = parsePort(val);
-        else if (key === "identityfile") currentHost.keyPath = val.replace(/^~/, process.env.HOME || "");
-      }
-    }
-    if (currentHost?.name && currentHost.host) {
-      hosts.push(currentHost as ConfiguredSshHost);
-    }
-    return hosts;
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
-      throw error;
-    return [];
-  }
-}
-
 export function mergeConfiguredSshHosts(
   projectHosts: readonly ConfiguredSshHost[],
   userHosts: readonly ConfiguredSshHost[],
-  sshConfigHosts: readonly ConfiguredSshHost[] = [],
 ): ConfiguredSshHost[] {
   const merged = new Map<string, ConfiguredSshHost>();
-  for (const host of [...projectHosts, ...userHosts, ...sshConfigHosts]) {
+  for (const host of [...projectHosts, ...userHosts]) {
     if (!merged.has(host.name)) merged.set(host.name, host);
   }
   return [...merged.values()];
 }
 
+/**
+ * Load plugin-managed host aliases (.omp/ssh.json). ~/.ssh/config is deliberately
+ * NOT parsed here: an unknown name is passed to the system ssh unchanged, so OpenSSH
+ * itself applies Match, Include, wildcards, ProxyJump/ProxyCommand and every
+ * IdentityFile. Rewriting an alias to user@HostName would bypass those settings.
+ */
 export async function loadConfiguredSshHosts(
   cwd: string,
 ): Promise<ConfiguredSshHost[]> {
-  const home = process.env.HOME || "/root";
-  const [projectHosts, userHosts, sshConfigHosts] = await Promise.all([
+  const [projectHosts, userHosts] = await Promise.all([
     readHostFile(getSSHConfigPath("project", cwd)),
     readHostFile(getSSHConfigPath("user", cwd)),
-    readSshConfigFile(`${home}/.ssh/config`),
   ]);
-  return mergeConfiguredSshHosts(projectHosts, userHosts, sshConfigHosts);
+  return mergeConfiguredSshHosts(projectHosts, userHosts);
 }
 
 export function parseConnectArgs(

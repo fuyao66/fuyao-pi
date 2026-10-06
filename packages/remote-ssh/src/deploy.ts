@@ -12,6 +12,7 @@ import {
   buildScpBaseCommand,
   buildSshBaseCommand,
   quoteRemoteArgument,
+  remoteShell,
   type SshConnectionOptions,
 } from "./ssh.ts";
 
@@ -214,7 +215,7 @@ export async function resolveRemoteHome(
   options: WorkerDeploymentOptions,
 ): Promise<string> {
   const output = await run(
-    [...buildSshBaseCommand(options), options.target, `printf '%s\\n' "$HOME"`],
+    [...buildSshBaseCommand(options), options.target, remoteShell(`printf '%s' "$HOME"`)],
     "Remote home probe", 120_000, options.signal,
   );
   if (!output.startsWith("/") || output.includes("\n")) {
@@ -232,7 +233,7 @@ export async function prepareRemoteWorker(
       [
         ...buildSshBaseCommand(options),
         options.target,
-        "uname -s && uname -m && printf '%s' \"$HOME\"",
+        remoteShell("uname -s && uname -m && printf '%s' \"$HOME\""),
       ],
       "Probe remote host platform and home", 120_000, options.signal,
     ),
@@ -276,7 +277,7 @@ export async function prepareRemoteWorker(
   const boundedPrune = `if command -v timeout >/dev/null 2>&1; then timeout -k 1 2 sh -c ${quoteRemoteArgument(prune)} >/dev/null 2>&1 || :; fi;`;
   const exists = await run(
     [...buildSshBaseCommand(options), options.target,
-      `if ${checks.join(" && ")}; then ${links} ${boundedPrune} printf ready; elif test -x ${quotedWorker} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${hash}'; then printf present; else printf missing; fi`],
+      remoteShell(`if ${checks.join(" && ")}; then ${links} ${boundedPrune} printf ready; elif test -x ${quotedWorker} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${hash}'; then printf present; else printf missing; fi`)],
     "Remote bundle cache check", 120_000, options.signal,
   );
   if (exists === "ready") return { workerPath: remoteWorker, home: probe.home };
@@ -292,7 +293,7 @@ export async function prepareRemoteWorker(
     [
       ...buildSshBaseCommand(options),
       options.target,
-      `mkdir -p ${quoteRemoteArgument(remoteDir)} && chmod 700 ${quoteRemoteArgument(remoteDir)}`,
+      remoteShell(`mkdir -p ${quoteRemoteArgument(remoteDir)} && chmod 700 ${quoteRemoteArgument(remoteDir)}`),
     ],
     "Remote cache setup", 120_000, options.signal,
   );
@@ -311,7 +312,7 @@ export async function prepareRemoteWorker(
       [
         ...buildSshBaseCommand(options),
         options.target,
-        `set -eu; actual=$(sha256sum ${quotedTemporary} | cut -d ' ' -f 1); test "$actual" = '${hash}'; chmod 700 ${quotedTemporary}; mv -f ${quotedTemporary} ${quotedWorker}; printf '%s\\n' '${hash}' > ${quotedTemporaryMarker}; chmod 600 ${quotedTemporaryMarker}; mv -f ${quotedTemporaryMarker} ${quotedMarker}`,
+        remoteShell(`set -eu; actual=$(sha256sum ${quotedTemporary} | cut -d ' ' -f 1); test "$actual" = '${hash}'; chmod 700 ${quotedTemporary}; mv -f ${quotedTemporary} ${quotedWorker}; echo '${hash}' > ${quotedTemporaryMarker}; chmod 600 ${quotedTemporaryMarker}; mv -f ${quotedTemporaryMarker} ${quotedMarker}`),
       ],
       "Worker activation", 120_000, options.signal,
     );
@@ -329,7 +330,7 @@ export async function prepareRemoteWorker(
 async function removeFailedUploads(options: WorkerDeploymentOptions, paths: string[]): Promise<void> {
   // Bound best-effort cleanup; preserve the original upload/activation error.
   await run([...buildSshBaseCommand(options), options.target,
-    `rm -f -- ${paths.map(quoteRemoteArgument).join(" ")}`], "Failed upload cleanup", 5_000).catch(() => {});
+    remoteShell(`rm -f -- ${paths.map(quoteRemoteArgument).join(" ")}`)], "Failed upload cleanup", 5_000).catch(() => {});
 }
 
 /** Versions retained under one contract namespace: the one just activated plus the previous one. */
@@ -364,7 +365,7 @@ async function pruneStaleRemoteWorkers(
     [
       ...buildSshBaseCommand(options),
       options.target,
-      buildPruneStaleWorkersCommand(namespaceDir, activeHash),
+      remoteShell(buildPruneStaleWorkersCommand(namespaceDir, activeHash)),
     ],
     "Remote worker cache prune",
     5_000, options.signal,
@@ -415,7 +416,7 @@ async function deployCompanionArtifact(
     [
       ...buildSshBaseCommand(options),
       options.target,
-      `test -x ${quotedRemoteArtifactBin} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${artifactHash}' && printf present || printf missing`,
+      remoteShell(`test -x ${quotedRemoteArtifactBin} && test "$(cat ${quotedMarker} 2>/dev/null)" = '${artifactHash}' && printf present || printf missing`),
     ],
     `${artifact.id} companion artifact check`, 120_000, options.signal,
   );
@@ -427,7 +428,7 @@ async function deployCompanionArtifact(
       [
         ...buildSshBaseCommand(options),
         options.target,
-        `mkdir -p ${quoteRemoteArgument(remoteArtifactDir)} && chmod 700 ${quoteRemoteArgument(remoteArtifactDir)}`,
+        remoteShell(`mkdir -p ${quoteRemoteArgument(remoteArtifactDir)} && chmod 700 ${quoteRemoteArgument(remoteArtifactDir)}`),
       ],
       `${artifact.id} companion artifact cache setup`, 120_000, options.signal,
     );
@@ -445,7 +446,7 @@ async function deployCompanionArtifact(
         [
           ...buildSshBaseCommand(options),
           options.target,
-          `set -eu; actual=$(sha256sum ${quoteRemoteArgument(tempUpload)} | cut -d ' ' -f 1); test "$actual" = '${artifactHash}'; chmod 700 ${quoteRemoteArgument(tempUpload)}; mv -f ${quoteRemoteArgument(tempUpload)} ${quotedRemoteArtifactBin}; printf '%s\n' '${artifactHash}' > ${quoteRemoteArgument(tempMarker)}; chmod 600 ${quoteRemoteArgument(tempMarker)}; mv -f ${quoteRemoteArgument(tempMarker)} ${quotedMarker}`,
+          remoteShell(`set -eu; actual=$(sha256sum ${quoteRemoteArgument(tempUpload)} | cut -d ' ' -f 1); test "$actual" = '${artifactHash}'; chmod 700 ${quoteRemoteArgument(tempUpload)}; mv -f ${quoteRemoteArgument(tempUpload)} ${quotedRemoteArtifactBin}; echo '${artifactHash}' > ${quoteRemoteArgument(tempMarker)}; chmod 600 ${quoteRemoteArgument(tempMarker)}; mv -f ${quoteRemoteArgument(tempMarker)} ${quotedMarker}`),
         ],
         `${artifact.id} companion artifact activation`, 120_000, options.signal,
       );
@@ -459,7 +460,7 @@ async function deployCompanionArtifact(
     [
       ...buildSshBaseCommand(options),
       options.target,
-      `ln -sf ${quotedRemoteArtifactBin} ${quotedWorkerDir}/${quoteRemoteArgument(artifact.executableName)}`,
+      remoteShell(`ln -sf ${quotedRemoteArtifactBin} ${quotedWorkerDir}/${quoteRemoteArgument(artifact.executableName)}`),
     ],
     `Link ${artifact.id} companion artifact to worker directory`, 120_000, options.signal,
   );

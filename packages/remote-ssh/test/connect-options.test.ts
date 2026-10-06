@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  loadConfiguredSshHosts,
   mergeConfiguredSshHosts,
   parseConnectArgs,
   type ConfiguredSshHost,
@@ -65,6 +69,23 @@ describe("remote connection aliases", () => {
     const project = { ...gpuBox, host: "project.example.com" };
     const user = { ...gpuBox, host: "user.example.com" };
     expect(mergeConfiguredSshHosts([project], [user])).toEqual([project]);
+  });
+
+  test("passes ~/.ssh/config aliases to the system ssh unchanged", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ssh-config-home-"));
+    const saved = process.env.HOME;
+    try {
+      await mkdir(join(home, ".ssh"));
+      // A Match block after Host prod must not leak into prod, and ProxyJump must apply.
+      await writeFile(join(home, ".ssh/config"), "Host prod\n  HostName 10.0.0.5\n  User deploy\n  ProxyJump bastion\nMatch host other\n  HostName evil.example.com\n  User root\n");
+      process.env.HOME = home;
+      const hosts = await loadConfiguredSshHosts(home);
+      expect(hosts).toEqual([]);
+      expect(parseConnectArgs("prod /srv", hosts)).toEqual({ target: "prod", displayTarget: "prod", cwd: "/srv" });
+    } finally {
+      process.env.HOME = saved;
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   test("rejects invalid positional and option shapes", () => {

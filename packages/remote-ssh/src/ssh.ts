@@ -28,6 +28,19 @@ export function quoteRemoteArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+/**
+ * Run a POSIX script under `sh` regardless of the remote login shell (fish, csh...).
+ * ssh hands the command line to the login shell, so only the outer `sh -c '...'` must
+ * parse there: the `'"'"'` quote escape is valid in sh, bash, zsh and fish. Fish
+ * interprets backslashes inside single quotes, so scripts must not contain any.
+ */
+export function remoteShell(script: string): string {
+  if (script.includes("\\")) {
+    throw new Error("Remote shell scripts must not contain backslashes");
+  }
+  return `sh -c ${quoteRemoteArgument(script)}`;
+}
+
 function appendCommonOptions(
   command: string[],
   options: SshConnectionOptions,
