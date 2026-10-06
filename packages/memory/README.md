@@ -164,6 +164,17 @@ neighborhood, so a match near the summary tail is readable. Semantic-only matche
 no literal query term still show the opening preview. Full summaries are available
 in `/memory` and through the optional `memory_expand` tool's `summary` mode.
 
+### Agent guidance
+
+Active Memory tools provide `promptSnippet` and `promptGuidelines` through Pi's native
+system-prompt builder, alongside their tool descriptions and parameter schemas. The
+rules cover when to search, current-workspace scope, historical evidence versus current
+instructions, summary paging after insufficient previews, and narrow raw expansion only
+when exact wording matters. Stored memories are not injected into the system prompt;
+Memory does not replace the prompt or install BCP context hooks. A real Pi SDK regression
+checks that these rules appear in the generated default system prompt. A forced/custom
+system prompt can override native sections; guidance cannot guarantee model compliance.
+
 ### Read a stored summary
 
 When `expandEnabled: true` is set in the local Memory configuration, use the existing
