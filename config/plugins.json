@@ -1,11 +1,11 @@
 {
   "piVersion": "1.0.2",
   "packages": [
-    "npm:billion-context-pi@0.1.83",
+    "npm:billion-context-pi@0.1.83-pr.611.430",
     "npm:@juicesharp/rpiv-ask-user-question@2.12.0",
     "npm:@juicesharp/rpiv-todo@2.12.0",
     "npm:pi-web-access@0.33.0",
-    "npm:@schovest/pi-goal@0.2.0",
+    "npm:@narumitw/pi-goal@0.54.8",
     "npm:pi-invisible-continue@0.3.13"
   ]
 }

@@ -12,7 +12,7 @@ export function isInheritedBcpChild(): boolean {
   return (process.env[OWNER] !== undefined || process.env[BCP_REMOTE_ENV] !== undefined) && process.env[PID] !== String(process.pid);
 }
 
-/** BCP 0.1.82 copies process.env and honors PI_CLI_PATH. One root owner per process. */
+/** BCP copies process.env and honors PI_CLI_PATH. One root owner per process. */
 export function createBcpConnectionInheritance(paths: { launcher: string; extension: string; cli: string }): PiRemoteConnectionInheritance {
   return {
     hasSpec: () => process.env[BCP_REMOTE_ENV] !== undefined,

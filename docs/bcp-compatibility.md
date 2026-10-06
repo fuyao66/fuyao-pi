@@ -1,5 +1,28 @@
 # BCP compatibility
 
+## Error-usage protection and Goal integration
+
+The current exact source is pinned in `config/plugins.json`. Its reviewed upstream
+PR build includes [#601](https://github.com/ranxianglei/billion-context-pi/pull/601)
+and [#611](https://github.com/ranxianglei/billion-context-pi/pull/611): failed-request
+usage without a trusted anchor is not treated as real emergency pressure, and the
+status panel uses the same policy. Genuine pressure and overflow protection remain
+active. This is not a fix for Pi or third-party footer estimates.
+
+Validation: 20 focused upstream tests, seven isolated published-package cases,
+actual sidecar ingestion into Memory plus mock vector backfill, and local regression
+suites. No paid provider or deliberate live network-failure test was used. Sidecar
+format and Memory storage remain compatible; no re-embedding is required.
+
+`test/goal-compat.test.ts` verifies the installed Narumitw Goal with BCP in both load
+orders: canonical old single-goal restoration, actual compression, retained active
+contract without raw-history resurrection, one continuation, reload and completion.
+Tests require the profile packages to be installed; `FUYAO_TEST_AGENT_DIR` selects a
+profile. Remote SSH host routing and compiled-worker shim were also checked: Goal
+controls remain local and workspace tools remain remote. Real SSH/ARM execution is
+not covered. Resume Goal with `/goal resume`, not `/continue`; experimental old queue
+states are outside the tested migration contract.
+
 ## 0.1.82 → 0.1.83
 
 [Upstream comparison](https://github.com/ranxianglei/billion-context-pi/compare/v0.1.82...v0.1.83)

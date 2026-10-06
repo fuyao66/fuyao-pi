@@ -72,9 +72,12 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     resolve(root, "packages/statusline"), resolve(legacyRoot, "packages/statusline"),
   ].map(identity));
   const managedIds = new Set(sources.map(identity));
+  // These Goal packages register the same commands/tools; never retain both.
+  if (managedIds.has("npm:@narumitw/pi-goal")) replacedIds.add("npm:@schovest/pi-goal");
   const findOld = (source: string) => old.find((e) => identity(sourceOf(e)) === identity(source));
   const pin = (source: string): PackageEntry => {
-    const previous = findOld(source);
+    const previous = findOld(source) ?? (identity(source) === "npm:@narumitw/pi-goal"
+      ? old.find(entry => identity(sourceOf(entry)) === "npm:@schovest/pi-goal") : undefined);
     // Preserve explicit resource filters on third-party packages.
     return typeof previous === "object" ? { ...previous, source } : source;
   };

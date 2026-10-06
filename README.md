@@ -18,7 +18,7 @@ Personal Pi Agent environment with customized extensions and configuration.
 | `@juicesharp/rpiv-ask-user-question` | Community, directly installable | Structured single/multiple-choice questions and custom input |
 | `@juicesharp/rpiv-todo` | Community, directly installable | Task lists, status tracking and dependencies |
 | `pi-web-access` | Community, directly installable | Web search, content fetching and source checks |
-| `@schovest/pi-goal` | Community, directly installable | Session goals with bounded automatic progress and completion/blocker reporting |
+| `@narumitw/pi-goal` | Community, directly installable | Session goals with bounded automatic progress and completion/blocker reporting |
 | `pi-invisible-continue` | Community, directly installable | Automatic continuation signals to reduce manual continue prompts |
 
 The four local packages are built/configured through this repository; the six community packages use upstream implementations. See the [full inventory](docs/plugins.md) for versions, upstream links, local modifications and standalone installation commands.

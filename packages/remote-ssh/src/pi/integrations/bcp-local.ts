@@ -14,7 +14,7 @@ export class BcpLocalArtifacts {
   }
   observe(name: string, content: readonly { type: string; text?: string }[], isError: boolean): void {
     if (name !== "decompress" || isError) return;
-    // BCP 0.1.82 reports an export in its first line. Do not scan restored payload text.
+    // BCP reports an export in its first line. Do not scan restored payload text.
     const first = content.find((item) => item.type === "text")?.text?.split("\n", 1)[0];
     const match = first?.match(/^(?:Block|Message) .+ written to (\/.*)\.$/);
     if (match) this.exported.add(resolve(match[1]));

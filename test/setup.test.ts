@@ -81,6 +81,24 @@ describe("personal Pi profile", () => {
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
   });
 
+  test("replaces Schovest Goal only when Narumitw is managed, preserving unrelated settings", () => {
+    const goalSources = [...sources, "npm:@narumitw/pi-goal@0.54.8"];
+    const existing = { theme: "fuyao-soft", packages: [
+      { source: "npm:@schovest/pi-goal@0.2.0", extensions: [] },
+      "npm:unrelated", { source: "npm:@narumitw/pi-goal@0.54.7", extensions: [] },
+    ] };
+    const result = mergeProfile(existing, {}, goalSources, root, agentDir);
+    expect(result.packages).toEqual([sources[0], ...locals, sources[1],
+      { source: goalSources[2], extensions: [] }, "npm:unrelated"]);
+    expect(result.theme).toBe(existing.theme);
+    expect(mergeProfile({ packages: [{ source: "npm:@schovest/pi-goal@0.2.0", extensions: [] }] }, {}, goalSources, root, agentDir).packages)
+      .toContainEqual({ source: goalSources[2], extensions: [] });
+    expect(mergeProfile(result, {}, goalSources, root, agentDir)).toEqual(result);
+    expect(mergeProfile({ packages: ["npm:@schovest/pi-goal@0.2.0"] }, {}, sources, root, agentDir).packages)
+      .toContain("npm:@schovest/pi-goal@0.2.0");
+    expect(existing.packages[0]).toEqual({ source: "npm:@schovest/pi-goal@0.2.0", extensions: [] });
+  });
+
   test("migrates root filters to children and is idempotent", () => {
     const filtered = { source: root, extensions: ["!packages/advisor/optional.ts", "!packages/memory/optional.ts"], themes: [] };
     const result = mergeProfile({ packages: [filtered] }, {}, sources, root, agentDir);

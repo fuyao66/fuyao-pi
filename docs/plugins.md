@@ -27,8 +27,16 @@
 | `@juicesharp/rpiv-ask-user-question` | 结构化单选、多选和自定义输入 | [rpiv-mono](https://github.com/juicesharp/rpiv-mono) |
 | `@juicesharp/rpiv-todo` | 任务列表、状态和依赖管理 | [rpiv-mono](https://github.com/juicesharp/rpiv-mono) |
 | `pi-web-access` | 网页搜索、内容抓取和来源核查 | [pi-web-access](https://github.com/nicobailon/pi-web-access) |
-| `@schovest/pi-goal` | 有边界的会话目标和完成/阻塞报告 | [pi-package-mono](https://github.com/schovest/pi-package-mono) |
+| `@narumitw/pi-goal` | 有边界的会话目标和完成/阻塞报告 | [pi-extensions](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-goal) |
 | `pi-invisible-continue` | 自动续跑提示 | [pi-invisible-continue](https://github.com/monotykamary/pi-invisible-continue) |
+
+## Goal
+
+Goal 是会话级单目标，不跨会话共享。恢复目标用 `/goal resume`，
+`/continue` 不是它的恢复入口。不要同时加载 Schovest 和 Narumitw 两个 Goal；
+setup 会替换旧包声明，保留已有显式资源过滤。Goal 控制与状态留在本地 Pi，
+Remote SSH 只路由工作区工具；普通委托不会因为继承 SSH 就继承父会话目标。
+默认自动响应与无进展保护保持启用，不默认开放扩展间 RPC。
 
 ## 更新方式
 
