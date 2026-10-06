@@ -83,7 +83,7 @@ Memory · Indexed 2 summaries · Saved 2 vectors
 ```
 
 成功的 BCP `compress` 工具完成事件触发后台当前会话扫描，不等整个任务结束。
-BCP 0.1.82 正常路径在返回前 await sidecar 原子保存（保存错误可能被内部记录并吞掉）。
+BCP normally awaits atomic sidecar persistence before returning (persistence errors may be recorded internally).
 扫描延迟 250ms，最多执行三次跟进以覆盖短暂落盘延迟；连续事件合并，扫描中收到事件不会丢失。
 超出该窗口的落盘失败仍由启动/轮末/搜索扫描兜底，不是永久文件监听。不会阻塞工具回调或修改编辑器/页脚。
 开启自动补建时，入库反馈等待下一批补建结束，摘要入库与向量保存合为一张卡，不再由
@@ -156,4 +156,4 @@ setup 注册独立的 `packages/memory` 本地包，由其 manifest 加载 `src/
 记忆测试使用 Node：`bun run test:memory`。`bun run check` 会包含全部记忆测试。
 
 保留上游 MIT 许可证与来源；本地增强包含同步/权限、项目范围、后台调度、混合检索及展示模块。
-升级上游时需对照这些边界人工合并并运行回归。审核、UI、SSH 插件各自位于独立的 `packages/` 子目录。
+升级上游时需对照这些边界人工合并并运行回归。审核与 SSH 插件各自位于独立的 `packages/` 子目录。

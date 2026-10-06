@@ -6,14 +6,14 @@ Personal Pi Agent environment with customized extensions and configuration.
 
 ## Plugins
 
-**10 plugin packages: 1 first-party, 3 locally modified, and 6 community packages.** Pi core is the runtime, not a plugin. The UI's five extension entries and theme count as one package.
+**10 plugin packages: 1 first-party, 3 locally modified, and 6 community packages.** Pi core is the runtime, not a plugin.
 
 | Plugin | Ownership / origin | Purpose |
 | --- | --- | --- |
 | [Remote SSH](packages/remote-ssh/README.md) | First-party, `pi-ssh-remote` | Core workspace tools over SSH, inherited delegate connections, local orchestration |
-| [UI](packages/ui/UPSTREAM.md) | Locally maintained derivative | Terminal editor, messages, tool output, header, quota display and theme |
 | [Advisor](packages/advisor/UPSTREAM.md) | Locally maintained derivative | Second-model review of BCP-transformed context instead of raw history replay |
 | [Memory](packages/memory/UPSTREAM.md) | Locally maintained derivative | Cross-session BCP summary search, project scope, incremental synchronization and optional embedding-based hybrid retrieval |
+| [Statusline](packages/statusline/README.md) | Locally maintained derivative | Native footer, cumulative cache rate and responsive wrapping |
 | `billion-context-pi` (BCP) | Community, directly installable | Context compression, recovery, diagnostics and sub-agent delegation |
 | `@juicesharp/rpiv-ask-user-question` | Community, directly installable | Structured single/multiple-choice questions and custom input |
 | `@juicesharp/rpiv-todo` | Community, directly installable | Task lists, status tracking and dependencies |
@@ -56,7 +56,7 @@ bun run smoke:pi
 
 Configure model access separately in your local Pi environment. Advisor model selection and Memory embedding service credentials are not supplied by this repository. For a custom agent directory, use the same `PI_CODING_AGENT_DIR` for setup, update and launch; some plugin-specific state still uses fixed home-directory paths.
 
-**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Setup registers UI, Advisor, Memory and Remote SSH as separate local packages, visible in `pi list`. Do not also install the upstream versions of these local plugins.
+**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Setup registers Advisor, Memory, Remote SSH and Statusline as separate local packages, visible in `pi list`. Do not also install the upstream versions of these local plugins.
 
 ## Everyday entry points
 
@@ -72,18 +72,19 @@ Memory embeddings are opt-in and send sanitized summary prefixes and queries to 
 ```text
 package.json / bun.lock  Composition manifest, runtime baseline and dependency lock
 packages/
-  ui/                    Maintained terminal UI derivative
   advisor/               Maintained BCP-compatible Advisor derivative
   memory/                Maintained BCP memory enhancement
   remote-ssh/            First-party remote execution extension and worker
+  statusline/             Native footer derivative
 config/                  Public settings and pinned companion sources
 scripts/                 Environment setup and integration tooling
 test/                    Cross-package/profile regression tests
 docs/                    Architecture, setup, maintenance and design records
-skills/ prompts/ themes/ Reserved personal resources (currently placeholders)
+themes/                  Standalone Pi theme palette
+skills/ prompts/         Reserved personal resources (currently placeholders)
 ```
 
-Each plugin contains its source, tests and provenance. Current UI themes live in `packages/ui/themes`.
+Each plugin contains its source, tests and provenance. Appearance uses Pi's native theme system and settings; `themes/fuyao-soft.json` is a standalone palette, not a UI plugin.
 
 ## Boundaries and maintenance
 

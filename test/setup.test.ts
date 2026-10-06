@@ -30,7 +30,7 @@ describe("personal Pi profile", () => {
       defaultProvider: "private-provider", retry: { maxRetries: 3 }, extensions: ["./custom.ts"],
       packages: ["npm:billion-context-pi", "/workspace/pi-ssh-remote/packages/pi", "npm:unrelated", { source: "npm:@juicesharp/rpiv-todo", extensions: [] }, "git:github.com/beautifulrem/pi-sakura-cyberdeck"],
     };
-    const result = mergeProfile(existing, { retry: { maxRetries: 20 }, theme: "sakura-macaron" }, sources, root, agentDir);
+    const result = mergeProfile(existing, { retry: { maxRetries: 20 }, theme: "system" }, sources, root, agentDir);
     expect(result.defaultProvider).toBe("private-provider");
     expect(result.retry).toEqual({ maxRetries: 3 });
     expect(result.extensions).toEqual(["./custom.ts"]);
@@ -39,10 +39,28 @@ describe("personal Pi profile", () => {
     expect(existing.packages[1]).toBe("/workspace/pi-ssh-remote/packages/pi");
   });
 
-  test("replaces upstream UI sources with the in-repo UI, without duplicate loading", () => {
+  test("removes retired upstream and local UI sources without reintroducing them", () => {
     const packages = [...upstreamUi, "npm:pi-sakura-cyberdeck@1.1.5", `${root}/packages/ui`, "/workspace/pi-ssh-remote/packages/ui"];
     const result = mergeProfile({ packages }, {}, sources, root, agentDir);
     expect(result.packages).toEqual([sources[0], ...locals, sources[1]]);
+  });
+
+  test("retires the removed theme and explicit UI paths, preserving unrelated preferences", () => {
+    const existing = {
+      theme: "sakura-macaron", tuiMode: "fullscreen",
+      extensions: [`${root}/packages/ui/extensions/zentui/index.ts`, "/workspace/pi-ssh-remote/packages/ui/extensions/header/index.ts", "./custom.ts"],
+      themes: [`${root}/packages/ui/themes/sakura-macaron.json`, "./personal.json"],
+      packages: [{ source: `${root}/packages/ui`, extensions: [] }, "npm:unrelated"],
+    };
+    const result = mergeProfile(existing, {}, sources, root, agentDir);
+    expect(result.theme).toBe("fuyao-soft");
+    expect(result.tuiMode).toBe("fullscreen");
+    expect(result.extensions).toEqual(["./custom.ts"]);
+    expect(result.themes).toEqual(["./personal.json", `${root}/themes/fuyao-soft.json`]);
+    expect(result.packages).toEqual([sources[0], ...locals, sources[1], "npm:unrelated"]);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+    expect(mergeProfile({ theme: "dark" }, { theme: "system" }, sources, root, agentDir).theme).toBe("dark");
+    expect(existing.extensions).toHaveLength(3);
   });
 
   test("replaces upstream and standalone Advisor declarations without duplicates", () => {
@@ -57,12 +75,18 @@ describe("personal Pi profile", () => {
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
   });
 
+  test("replaces upstream Statusline once and retains the local package on repeat setup", () => {
+    const result = mergeProfile({ packages: ["npm:@narumitw/pi-statusline@0.50.2", "npm:unrelated"] }, {}, sources, root, agentDir);
+    expect(result.packages).toEqual([sources[0], ...locals, sources[1], "npm:unrelated"]);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+  });
+
   test("migrates root filters to children and is idempotent", () => {
-    const filtered = { source: root, extensions: ["!packages/ui/extensions/matrix/index.ts", "!packages/ui/extensions/dual-quota/index.ts"], themes: [] };
+    const filtered = { source: root, extensions: ["!packages/advisor/optional.ts", "!packages/memory/optional.ts"], themes: [] };
     const result = mergeProfile({ packages: [filtered] }, {}, sources, root, agentDir);
     for (const name of localPlugins) {
       expect(result.packages).toContainEqual({ source: `${root}/packages/${name}`,
-        extensions: [`!${root}/packages/ui/extensions/matrix/index.ts`, `!${root}/packages/ui/extensions/dual-quota/index.ts`], themes: [] });
+        extensions: [`!${root}/packages/advisor/optional.ts`, `!${root}/packages/memory/optional.ts`], themes: [] });
     }
     expect(result.packages).toHaveLength(sources.length + localPlugins.length);
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
@@ -85,7 +109,7 @@ describe("personal Pi profile", () => {
   });
 
   test("keeps child resource filters on subsequent setup", () => {
-    const child = { source: `${root}/packages/ui`, extensions: ["!extensions/matrix/index.ts"] };
+    const child = { source: `${root}/packages/memory`, extensions: ["!optional.ts"] };
     const result = mergeProfile({ packages: [child] }, {}, sources, root, agentDir);
     expect(result.packages).toContainEqual(child);
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
@@ -94,17 +118,17 @@ describe("personal Pi profile", () => {
   test("relocates legacy child filters and removes the legacy root entry", () => {
     const result = mergeProfile({ packages: [
       { source: "/workspace/pi-ssh-remote", themes: ["-/workspace/pi-ssh-remote/themes/a.json"] },
-      { source: "/workspace/pi-ssh-remote/packages/ui", extensions: ["-/workspace/pi-ssh-remote/packages/ui/extensions/matrix/index.ts"] },
+      { source: "/workspace/pi-ssh-remote/packages/memory", extensions: ["-/workspace/pi-ssh-remote/packages/memory/optional.ts"] },
     ] }, {}, sources, root, agentDir);
     expect(result.packages!.map(e => typeof e === "string" ? e : e.source)).not.toContain(root);
-    expect(result.packages).toContainEqual({ source: `${root}/packages/ui`, extensions: [`-${root}/packages/ui/extensions/matrix/index.ts`] });
+    expect(result.packages).toContainEqual({ source: `${root}/packages/memory`, extensions: [`-${root}/packages/memory/optional.ts`] });
     expect(() => rebaseFilters(["!{index.ts,packages/ui/**}"], root)).toThrow(/manual/);
   });
 
   test("Pi resource resolution preserves enabled paths across split, including delta mode", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "fuyao-split-resolve-"));
     try {
-      const entries = ["packages/remote-ssh/index.ts", "packages/advisor/index.ts", "packages/memory/index.ts", "packages/ui/extensions/matrix/index.ts", "packages/ui/extensions/header/index.ts"];
+      const entries = localPlugins.map(name => `packages/${name}/index.ts`);
       for (const entry of entries) {
         await mkdir(join(tmp, entry, ".."), { recursive: true });
         await writeFile(join(tmp, entry), "export default () => {};");
@@ -143,7 +167,7 @@ describe("personal Pi profile", () => {
       await mkdir(join(repo, "config"), { recursive: true });
       await mkdir(join(repo, "packages/remote-ssh/dist"), { recursive: true });
       await writeFile(join(repo, "packages/remote-ssh/dist/pi-extension.js"), "");
-      await writeFile(join(repo, "config/settings.json"), '{"theme":"sakura-macaron"}');
+      await writeFile(join(repo, "config/settings.json"), '{"theme":"system"}');
       await writeFile(join(repo, "config/plugins.json"), JSON.stringify({ packages: sources }));
       const acp = join(tmp, "home", ".pi", "acp.json");
       await setup(agent, false, repo, acp);

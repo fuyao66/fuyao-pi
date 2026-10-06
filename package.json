@@ -25,11 +25,10 @@
     "build:pi-worker:all": "bun run build:pi-worker:arm64 && bun run build:pi-worker:x64",
     "smoke:pi": "bun packages/remote-ssh/scripts/smoke-fixed-stack.ts",
     "benchmark:pi": "bun packages/remote-ssh/scripts/benchmark-remote.ts pi",
-    "check:ui": "node packages/ui/scripts/check.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/memory/tsconfig.json",
     "test:memory": "FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx packages/memory/tests/self-test.test.ts && FUYAO_MEMORY_EMBEDDING_DISABLED=1 node --import tsx --test packages/memory/tests/hybrid.test.ts packages/memory/tests/auto-embed.test.ts packages/memory/tests/auto-lifecycle.test.ts packages/memory/tests/activity.test.ts packages/memory/tests/browser.test.ts packages/memory/tests/revisions.test.ts packages/memory/tests/compression-scan.test.ts packages/memory/tests/source-policy.test.ts packages/memory/tests/project-scope.test.ts packages/memory/tests/scope-lifecycle.test.ts",
-    "test": "bun test ./test ./packages/advisor/test ./packages/remote-ssh/test && bun run test:memory",
-    "check": "bun run typecheck && bun run build && bun run check:ui && bun run test"
+    "test": "bun test ./test ./packages/advisor/test ./packages/remote-ssh/test ./packages/statusline/test && bun run test:memory",
+    "check": "bun run typecheck && bun run build && bun run test"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.0.2",

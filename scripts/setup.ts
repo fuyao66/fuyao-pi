@@ -32,7 +32,7 @@ export function packageIdentity(source: string, agentDir: string): string {
   return `local:${path}`;
 }
 
-export const localPlugins = ["remote-ssh", "advisor", "memory", "ui"] as const;
+export const localPlugins = ["remote-ssh", "advisor", "memory", "statusline"] as const;
 const resourceTypes = ["extensions", "themes", "skills", "prompts"] as const;
 
 // Pi patterns match package-relative paths, absolute paths and (for globs) basenames.
@@ -60,7 +60,7 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     root, resolve(root, "packages/remote-ssh"), resolve(root, "packages/pi"),
     legacyRoot, resolve(legacyRoot, "packages/pi"), resolve(legacyRoot, "packages/remote-ssh"),
   ].map(identity));
-  // UI, Advisor and Memory are maintained in-tree; avoid duplicate patches/tools/commands.
+  // Retire the old UI; Advisor and Memory remain maintained in-tree.
   const replacedIds = new Set([
     "git:https://github.com/beautifulrem/pi-sakura-cyberdeck.git", "npm:pi-sakura-cyberdeck",
     resolve(root, "packages/ui"), resolve(legacyRoot, "packages/ui"),
@@ -68,6 +68,8 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     resolve(root, "packages/advisor"), resolve(legacyRoot, "packages/advisor"),
     "git:https://github.com/tjp72/pi-billion-memory.git", "npm:pi-billion-memory", "npm:@fuyao/pi-memory",
     resolve(root, "packages/memory"), resolve(legacyRoot, "packages/memory"),
+    "npm:@narumitw/pi-statusline", "npm:@fuyao/pi-statusline",
+    resolve(root, "packages/statusline"), resolve(legacyRoot, "packages/statusline"),
   ].map(identity));
   const managedIds = new Set(sources.map(identity));
   const findOld = (source: string) => old.find((e) => identity(sourceOf(e)) === identity(source));
@@ -108,7 +110,28 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     const id = identity(sourceOf(entry));
     if (!managedIds.has(id) && !localIds.has(id) && !replacedIds.has(id)) packages.push(entry);
   }
-  return { ...defaults, ...existing, packages };
+  const next: Settings = { ...defaults, ...existing, packages };
+  // The removed theme cannot be resolved after its package is retired.
+  if (next.theme === "sakura-macaron") next.theme = "fuyao-soft";
+  // Also retire explicit file entries from the known local UI directories.
+  for (const type of ["extensions", "themes"] as const) {
+    const entries = next[type];
+    if (!Array.isArray(entries)) continue;
+    next[type] = entries.filter(entry => {
+      if (typeof entry !== "string") return true;
+      const path = packageIdentity(entry, agentDir);
+      return ![root, legacyRoot].some(base => path.startsWith(`local:${resolve(base, "packages/ui")}/`));
+    });
+  }
+  const themePath = resolve(root, "themes/fuyao-soft.json");
+  const themes = next.themes;
+  if (themes !== undefined && (!Array.isArray(themes) || themes.some(entry => typeof entry !== "string"))) {
+    throw new Error("settings.themes must be an array of paths");
+  }
+  const themeIds = new Set([themePath, resolve(legacyRoot, "themes/fuyao-soft.json")].map(identity));
+  next.themes = [...((themes as string[] | undefined) ?? []).filter(entry =>
+    !themeIds.has(identity(entry))), themePath];
+  return next;
 }
 
 type AcpSettings = Record<string, unknown>;
@@ -146,7 +169,7 @@ export async function setup(
   const changed = settingsChanged || acpChanged;
 
   console.log(`${apply ? "Apply" : "Preview"}: ${target}`);
-  console.log("Managed packages (unrelated packages/preferences preserved; upstream UI / Advisor / Memory replaced by in-repo forks):");
+  console.log("Managed packages (unrelated packages/preferences preserved; retired UI removed; Advisor / Memory use in-repo forks):");
   for (const entry of next.packages ?? []) console.log(`  ${sourceOf(entry)}${typeof entry === "object" ? " (filtered)" : ""}`);
   console.log(`BCP auto-update: disabled in ${acpPath}`);
   if (!apply || !changed) {

@@ -40,8 +40,7 @@ should be fixed in a reviewed update, not hidden by editing installed package fi
    bun run check
    ```
 
-   `check` performs typechecks, builds the local SSH entry, checks UI statically and runs
-   tests. Memory uses Node's `node:sqlite`; run `bun run test:memory`, not `bun test` on
+   `check` performs typechecks, builds the local SSH entry and runs tests. Memory uses Node's `node:sqlite`; run `bun run test:memory`, not `bun test` on
    its test directory. Tests disable real embedding configuration and use isolated data.
 4. For remote worker/protocol or Pi runtime changes:
 
@@ -52,9 +51,7 @@ should be fixed in a reviewed update, not hidden by editing installed package fi
 
    The smoke uses an SSH process shim and real worker/SDK code. It does not prove real
    network authentication, ARM64 execution or model-provider behavior.
-5. For UI changes, inspect regular/fullscreen behavior, narrow terminals, resizing,
-   Chinese input and theme changes. Static checks do not constitute visual acceptance.
-6. Update the owning package contract and relevant integration docs. Restart Pi when
+5. Update the owning package contract and relevant integration docs. Restart Pi when
    changing loaded extension code; do not assume the running process hot-reloads it.
 
 For documentation-only changes, check links, paths and example commands.

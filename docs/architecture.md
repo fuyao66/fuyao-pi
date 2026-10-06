@@ -7,13 +7,12 @@
 | Part | Owner / source of truth | Change location |
 | --- | --- | --- |
 | Upstream runtime | Pi core and public APIs | Pinned dependencies in root `package.json`; installed Pi CLI must match |
-| Locally maintained capabilities | First-party remote-ssh; UI, Advisor and Memory derivatives | `packages/<name>/`, including tests and provenance |
+| Locally maintained capabilities | First-party remote-ssh; Advisor, Memory and Statusline derivatives | `packages/<name>/`, including tests and provenance |
 | Environment composition | Root manifest, companion profile, public defaults | `package.json`, `config/`, `scripts/setup.ts`, root `test/` |
 | Private runtime state | The user's Pi installation and plugin-specific local files | Outside Git: model credentials, settings overrides, sessions, memory DB, SSH configuration |
 
-Setup registers `packages/remote-ssh`, `packages/advisor`, `packages/memory` and
-`packages/ui` separately so `pi list` identifies each capability. Each child manifest
-owns its extensions and themes. Reserved root resources are not loaded by setup. Companion extensions come from `config/plugins.json`. Setup loads BCP
+Setup registers `packages/remote-ssh`, `packages/advisor`, `packages/memory` and `packages/statusline`
+separately so `pi list` identifies each capability. Each child manifest owns its extensions. Reserved root resources are not loaded by setup. Companion extensions come from `config/plugins.json`. Setup loads BCP
 first, followed by local packages and companions, preserving unrelated declarations.
 
 ## Capabilities and contracts
@@ -62,11 +61,11 @@ A small read-only event publishes workspace identity to Memory; it exposes no ke
 material. It does not make every third-party plugin's internal filesystem access remote.
 See [SSH boundaries](../packages/remote-ssh/README.md).
 
-### Presentation: UI
+### Presentation
 
-Five extension entries provide the Sakura-derived header, matrix, Zentui, quota and
-shimmer functionality, alongside the theme. Components use Pi's TUI. Visual changes
-require terminal testing beyond static checks.
+Appearance uses Pi's native theme system and settings, including a standalone palette
+in `themes/`. Statusline uses the public footer API; there is no local
+transcript/editor patch layer.
 
 ## Execution and data boundaries
 

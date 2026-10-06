@@ -6,14 +6,14 @@
 
 ## 插件清单
 
-共 **10 个插件包：1 个自研、3 个本地改装、6 个社区插件**。Pi core 是运行底座，不计入插件数量；UI 的五个扩展入口和主题按一个包计数。
+共 **10 个插件包：1 个自研、3 个本地改装、6 个社区插件**。Pi core 是运行底座，不计入插件数量。
 
 | 插件 | 归属 / 来源 | 作用 |
 | --- | --- | --- |
 | [Remote SSH](packages/remote-ssh/README.zh-CN.md) | 自研，`pi-ssh-remote` | 通过 SSH 执行核心工作区工具，继承 delegate 的远端连接，控制面留在本地 |
-| [UI](packages/ui/UPSTREAM.md) | 本地维护的派生插件 | 终端编辑区、消息与工具输出、页头、配额展示和主题 |
 | [Advisor](packages/advisor/UPSTREAM.md) | 本地维护的派生插件 | 由另一模型提供第二意见，使用 BCP 处理后的上下文而非重放原始历史 |
 | [Memory](packages/memory/UPSTREAM.md) | 本地维护的派生插件 | BCP 摘要跨会话检索、项目隔离、自动增量同步及可选 Embedding 混合检索 |
+| [Statusline](packages/statusline/README.md) | 本地维护的派生插件 | 原生底栏、累计缓存命中率及自适应换行 |
 | `billion-context-pi`（BCP） | 社区，可直接安装 | 长上下文压缩、摘要恢复、上下文诊断和子代理委托 |
 | `@juicesharp/rpiv-ask-user-question` | 社区，可直接安装 | 结构化提问，提供单选、多选及自定义输入 |
 | `@juicesharp/rpiv-todo` | 社区，可直接安装 | 管理任务列表、状态及依赖关系 |
@@ -56,7 +56,7 @@ bun run smoke:pi
 
 模型访问权限在本地 Pi 中单独配置；仓库不提供 Advisor 审核模型选择或 Memory Embedding 服务凭证。使用自定义 agent 目录时，setup、update 和启动需使用相同的 `PI_CODING_AGENT_DIR`；个别插件状态仍使用固定的 home 路径。
 
-**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 UI、Advisor、Memory 和 Remote SSH 注册为独立本地包，`pi list` 可分别查看。不要再安装这些本地插件的上游版本。
+**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 Advisor、Memory、Remote SSH 和 Statusline 注册为独立本地包，`pi list` 可分别查看。不要再安装这些本地插件的上游版本。
 
 ## 日常入口
 
@@ -72,18 +72,19 @@ Memory Embedding 需明确启用，会向外部服务发送脱敏后的摘要前
 ```text
 package.json / bun.lock  整体组合入口、运行基线与依赖锁
 packages/
-  ui/                    本地维护的终端 UI 派生扩展
   advisor/               本地维护的 BCP 兼容审核扩展
   memory/                本地维护的 BCP 记忆增强扩展
   remote-ssh/            自研远程执行扩展与 worker
+  statusline/             原生底栏派生插件
 config/                  公开默认配置、固定版本配套插件来源
 scripts/                 环境安装与集成脚本
 test/                    跨包/配置回归测试
 docs/                    架构、安装、维护及设计记录
-skills/ prompts/ themes/ 个人资源预留目录，目前仅占位
+themes/                  独立的 Pi 主题配色
+skills/ prompts/         个人资源预留目录，目前仅占位
 ```
 
-各插件包含自己的源码、测试和来源说明。当前 UI 主题位于 `packages/ui/themes`。
+各插件包含自己的源码、测试和来源说明。外观通过 Pi 原生主题系统和设置调整；`themes/fuyao-soft.json` 只是独立配色，不是 UI 插件。
 
 ## 边界与维护原则
 

@@ -10,7 +10,7 @@
 | --- | --- |
 | 安装固定版本 Pi CLI | 安装上游 `pi` 命令 |
 | `bun install --frozen-lockfile` | 安装本仓库工作区依赖 |
-| `bun run check` | 类型检查、构建本地 SSH 扩展、UI 静态检查与测试；不编译远端 worker |
+| `bun run check` | 类型检查、构建本地 SSH 扩展与测试；不编译远端 worker |
 | `bun run setup` / `--apply` | 预览或备份合并 Pi 包声明和公开默认值 |
 | `pi install <清单中的固定来源>` | 安装/校准配套上游扩展，不更新本地派生源码 |
 | `bun run build:pi-worker:all` | 首次 SSH 使用前生成 Linux x64/arm64 worker |
@@ -22,14 +22,30 @@
 ## 配置分层
 
 1. `config/settings.json`：公开的个人默认偏好，不包含私有模型/provider。
-2. `config/plugins.json`：第三方包来源与版本；setup 分别注册 `packages/remote-ssh`、`packages/advisor`、`packages/memory`、`packages/ui`；根包仅提供个人 skills/prompts/themes。
-3. `~/.pi/agent/settings.json`：实际运行配置。setup **只填补缺失的顶层默认项**，不会强制重置已有偏好；受管理插件替换为固定版本，保留第三方包对象的资源过滤字段。旧的外部 Sakura UI 包声明会被删除，由仓库内 `packages/ui` 替代（不保留旧声明的资源过滤，默认加载该 UI 的五个入口和主题）；旧的 `npm:@juicesharp/rpiv-advisor` 和独立 `packages/advisor` 包声明也会被仓库内 Advisor 替代；上游 `pi-billion-memory` Git/npm 及独立 Memory 包声明由 `packages/memory` 替代。显式写在 `extensions` 中的旧入口需手工移除。其余插件保持原样。
+2. `config/plugins.json`：第三方包来源与版本；setup 分别注册 `packages/remote-ssh`、`packages/advisor`、`packages/memory` 和 `packages/statusline`；`themes/fuyao-soft.json` 作为独立主题资源加载，根包不加载扩展。
+3. `~/.pi/agent/settings.json`：实际运行配置。setup **只填补缺失的顶层默认项**，不会强制重置已有偏好；受管理插件替换为固定版本，保留第三方包对象的资源过滤字段。旧的外部 Sakura 和本地 UI 包声明会移除，已移除的 `sakura-macaron` 主题迁移为独立的 `fuyao-soft` 配色；旧的 `npm:@juicesharp/rpiv-advisor` 和独立 `packages/advisor` 包声明也会被仓库内 Advisor 替代；上游 `pi-billion-memory` Git/npm 及独立 Memory 包声明由 `packages/memory` 替代。明确指向当前或同级旧仓库 `packages/ui/` 的直接扩展/主题路径也会移除；其他手动旧入口需自行检查。其余插件保持原样。
 4. `~/.pi/acp.json`：BCP 的用户级配置。`setup --apply` 将 `autoUpdate` 设为 `false`，保留其他 ACP 设置并为已有文件备份。
 5. 模型、密钥和插件私密配置：继续留在本地，不导出到本仓库。
 
-必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / UI → 其他 companion 包。
+必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / Statusline → 其他 companion 包。
 
 从旧整包加载迁移时，setup 将根条目的资源过滤规则转换到子包，保留已禁用的扩展。空的根资源包条目会移除；之后可用 `pi config` 分别管理子包。`pi list` 的 `(filtered)` 表示存在资源筛选，不是错误。
+
+## 主题
+
+`themes/fuyao-soft.json` 是独立的深色配色，不包含扩展代码、布局或按键补丁。
+setup 注册主题资源；在 `/settings` 中选择 `fuyao-soft`，也可使用 Pi 内置的
+`system`、`dark`、`light`。主题只改变颜色，不改变整个终端的默认背景。
+修改仓库中的主题后运行 `/reload`。已有自选主题和 `tuiMode` 均保留，只有已移除的
+`sakura-macaron` 会迁移。将文件复制到 `<agent-dir>/themes/fuyao-soft.json` 后可直接
+使用原生热更新，但不要同时注册两份同名主题。
+
+## Statusline
+
+setup 将上游 `npm:@narumitw/pi-statusline` 替换为本地派生包，避免重复加载。
+`<agent-dir>/pi-statusline.json` 和 `/statusline` 配置入口保留；现有配色和字段顺序不变。
+上下文显示百分比与已用/窗口，缓存显示会话累计加权命中率；窄屏优先两行，极窄时
+允许更多行而不是删字段。数据口径和边界见 [Statusline](../packages/statusline/README.md)。
 
 ## Memory 本地配置
 
@@ -61,7 +77,7 @@ bun run setup --agent-dir /tmp/pi-profile # 预览另一个配置目录
 | `scripts/`（SSH 构建与验证） | `packages/remote-ssh/scripts/` |
 | `packages/pi/dist/` | `packages/remote-ssh/dist/` |
 | 根 SSH README | `packages/remote-ssh/README*.md` |
-| 外部 Sakura Cyberdeck 包 | `packages/ui/`（源码派生版本，保留许可证） |
+| 外部 Sakura / 本地 UI 包 | 不再加载；外观通过原生主题与设置调整 |
 | 外部 RPIV Advisor | `packages/advisor/`（BCP 兼容派生版本） |
 | 外部 pi-billion-memory | `packages/memory/`（记忆增强；旧数据库路径保留） |
 
@@ -71,7 +87,7 @@ setup 识别同级旧 `pi-ssh-remote` 工作副本及其 `packages/pi` 路径声
 
 ## 自定义配置目录的边界
 
-`PI_CODING_AGENT_DIR` 选择 Pi agent 目录，不代表所有插件都使用相对路径。Memory 默认数据库/允许列表和 Embedding 配置位于 `~/.pi`，Advisor 选择位于 `~/.config/rpiv-advisor`；部分 UI 状态也保留上游固定路径。需要多套完全隔离的数据时，必须逐个核对插件配置，不能只换一个环境变量就宣称已经隔离。
+`PI_CODING_AGENT_DIR` 选择 Pi agent 目录，不代表所有插件都使用相对路径。Memory 默认数据库/允许列表和 Embedding 配置位于 `~/.pi`，Advisor 选择位于 `~/.config/rpiv-advisor`。需要多套完全隔离的数据时，必须逐个核对插件配置，不能只换一个环境变量就宣称已经隔离。
 
 公开默认 `compaction.enabled=false` 适用于 BCP；移除 BCP 时重新评估原生压缩。`retry.maxRetries=20` 可能增加费用和等待时间，已有设置由 setup 保留而非强制覆盖。
 
