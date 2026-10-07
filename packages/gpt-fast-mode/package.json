@@ -1,0 +1,16 @@
+{
+  "name": "@fuyao/pi-gpt-fast-mode",
+  "version": "0.4.0-fuyao.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Minimal allowlisted GPT priority tier toggle",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

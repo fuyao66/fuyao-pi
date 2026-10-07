@@ -14,8 +14,9 @@
 | Advisor | 基于 BCP 处理后上下文的第二模型审核 | [`packages/advisor/UPSTREAM.md`](../packages/advisor/UPSTREAM.md) |
 | Memory | BCP 摘要跨会话索引、项目范围、同步和可选混合检索 | [`packages/memory/UPSTREAM.md`](../packages/memory/UPSTREAM.md) |
 | Statusline | 原生底栏、累计缓存率、自适应换行 | [`packages/statusline/UPSTREAM.md`](../packages/statusline/UPSTREAM.md) |
+| GPT Fast | 按用户模型名单切换 priority 请求字段 | [`packages/gpt-fast-mode/UPSTREAM.md`](../packages/gpt-fast-mode/UPSTREAM.md) |
 
-三个派生插件保留上游许可证和来源记录，但仓库中的源码才是实际运行版本。不要同时安装对应的上游包，避免工具或命令重复加载。外观使用 Pi 原生主题系统和设置，支持独立配色文件，底栏由独立 Statusline 提供，不修改编辑器或消息组件。
+派生插件保留上游许可证和来源记录，但仓库中的源码才是实际运行版本。不要同时安装对应的上游包，避免工具或命令重复加载。外观使用 Pi 原生主题系统和设置，支持独立配色文件，底栏由独立 Statusline 提供，不修改编辑器或消息组件。
 
 ## 直接使用的社区插件
 

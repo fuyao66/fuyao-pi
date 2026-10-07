@@ -19,6 +19,7 @@
 | Memory | [Usage and current behavior](../packages/memory/README.md), [provenance](../packages/memory/UPSTREAM.md) |
 | Remote SSH | [English](../packages/remote-ssh/README.md) / [中文](../packages/remote-ssh/README.zh-CN.md) |
 | Statusline | [Usage and data definitions](../packages/statusline/README.md), [provenance](../packages/statusline/UPSTREAM.md) |
+| GPT Fast | [Usage and allowlist](../packages/gpt-fast-mode/README.md), [provenance](../packages/gpt-fast-mode/UPSTREAM.md) |
 
 插件细节以本地派生版本的契约为准。保留的上游安装说明不等于整套 fuyao-pi 的安装步骤。
 

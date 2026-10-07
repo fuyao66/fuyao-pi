@@ -7,11 +7,11 @@
 | Part | Owner / source of truth | Change location |
 | --- | --- | --- |
 | Upstream runtime | Pi core and public APIs | Pinned dependencies in root `package.json`; installed Pi CLI must match |
-| Locally maintained capabilities | First-party remote-ssh; Advisor, Memory and Statusline derivatives | `packages/<name>/`, including tests and provenance |
+| Locally maintained capabilities | First-party remote-ssh; Advisor, Memory, Statusline and GPT Fast derivatives | `packages/<name>/`, including tests and provenance |
 | Environment composition | Root manifest, companion profile, public defaults | `package.json`, `config/`, `scripts/setup.ts`, root `test/` |
 | Private runtime state | The user's Pi installation and plugin-specific local files | Outside Git: model credentials, settings overrides, sessions, memory DB, SSH configuration |
 
-Setup registers `packages/remote-ssh`, `packages/advisor`, `packages/memory` and `packages/statusline`
+Setup registers `packages/remote-ssh`, `packages/advisor`, `packages/memory`, `packages/statusline` and `packages/gpt-fast-mode`
 separately so `pi list` identifies each capability. Each child manifest owns its extensions. Reserved root resources are not loaded by setup. Companion extensions come from `config/plugins.json`. Setup loads BCP
 first, followed by local packages and companions, preserving unrelated declarations.
 

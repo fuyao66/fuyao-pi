@@ -22,12 +22,12 @@
 ## 配置分层
 
 1. `config/settings.json`：公开的个人默认偏好，不包含私有模型/provider。
-2. `config/plugins.json`：第三方包来源与版本；setup 分别注册 `packages/remote-ssh`、`packages/advisor`、`packages/memory` 和 `packages/statusline`；`themes/fuyao-soft.json` 作为独立主题资源加载，根包不加载扩展。
+2. `config/plugins.json`：第三方包来源与版本；setup 分别注册 `packages/remote-ssh`、`packages/advisor`、`packages/memory` 、`packages/statusline` 和 `packages/gpt-fast-mode`；`themes/fuyao-soft.json` 作为独立主题资源加载，根包不加载扩展。
 3. `~/.pi/agent/settings.json`：实际运行配置。setup **只填补缺失的顶层默认项**，不会强制重置已有偏好；受管理插件替换为固定版本，保留第三方包对象的资源过滤字段。旧的外部 Sakura 和本地 UI 包声明会移除，已移除的 `sakura-macaron` 主题迁移为独立的 `fuyao-soft` 配色；旧的 `npm:@juicesharp/rpiv-advisor` 和独立 `packages/advisor` 包声明也会被仓库内 Advisor 替代；上游 `pi-billion-memory` Git/npm 及独立 Memory 包声明由 `packages/memory` 替代。明确指向当前或同级旧仓库 `packages/ui/` 的直接扩展/主题路径也会移除；其他手动旧入口需自行检查。其余插件保持原样。
 4. `~/.pi/acp.json`：BCP 的用户级配置。`setup --apply` 将 `autoUpdate` 设为 `false`，保留其他 ACP 设置并为已有文件备份。
 5. 模型、密钥和插件私密配置：继续留在本地，不导出到本仓库。
 
-必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / Statusline → 其他 companion 包。
+必须执行 setup 并让 Pi 校准依赖。加载顺序为 BCP → 本地 Remote SSH / Advisor / Memory / Statusline / GPT Fast → 其他 companion 包。
 
 从旧整包加载迁移时，setup 将根条目的资源过滤规则转换到子包，保留已禁用的扩展。空的根资源包条目会移除；之后可用 `pi config` 分别管理子包。`pi list` 的 `(filtered)` 表示存在资源筛选，不是错误。
 
@@ -46,6 +46,13 @@ setup 将上游 `npm:@narumitw/pi-statusline` 替换为本地派生包，避免�
 `<agent-dir>/pi-statusline.json` 和 `/statusline` 配置入口保留；现有配色和字段顺序不变。
 上下文显示百分比与已用/窗口，缓存显示会话累计加权命中率；窄屏优先两行，极窄时
 允许更多行而不是删字段。数据口径和边界见 [Statusline](../packages/statusline/README.md)。
+
+## GPT Fast
+
+本地 `packages/gpt-fast-mode` 提供 `/fast`，默认关闭，只对用户 CPA GPT 名单添加
+`service_tier: "priority"`。不替换 provider，也不探测上游。名单可在
+`<agent-dir>/settings.json` 的 `pi-gpt-fast-mode.models` 中明确替换；详情见
+[GPT Fast](../packages/gpt-fast-mode/README.md)。不要同时加载其他 `/fast` 插件。
 
 ## Memory 本地配置
 

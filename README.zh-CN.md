@@ -14,6 +14,7 @@
 | [Advisor](packages/advisor/UPSTREAM.md) | 本地维护的派生插件 | 由另一模型提供第二意见，使用 BCP 处理后的上下文而非重放原始历史 |
 | [Memory](packages/memory/UPSTREAM.md) | 本地维护的派生插件 | BCP 摘要跨会话检索、项目隔离、自动增量同步及可选 Embedding 混合检索 |
 | [Statusline](packages/statusline/README.md) | 本地维护的派生插件 | 原生底栏、累计缓存命中率及自适应换行 |
+| [GPT Fast](packages/gpt-fast-mode/README.md) | 本地维护的派生插件 | 按用户模型名单切换 priority 请求字段 |
 | `billion-context-pi`（BCP） | 社区，可直接安装 | 长上下文压缩、摘要恢复、上下文诊断和子代理委托 |
 | `@juicesharp/rpiv-ask-user-question` | 社区，可直接安装 | 结构化提问，提供单选、多选及自定义输入 |
 | `@juicesharp/rpiv-todo` | 社区，可直接安装 | 管理任务列表、状态及依赖关系 |
@@ -21,7 +22,7 @@
 | `@narumitw/pi-goal` | 社区，可直接安装 | 设置会话目标，在限制内自动推进并报告完成或阻塞 |
 | `pi-invisible-continue` | 社区，可直接安装 | 自动发送续跑信号，减少手动催促继续 |
 
-四个本地插件通过本仓库构建、setup 加载；六个社区插件保留上游实现。具体版本、上游链接、改装说明和独立安装命令见[完整清单](docs/plugins.md)。
+五个本地插件通过本仓库构建、setup 加载；六个社区插件保留上游实现。具体版本、上游链接、改装说明和独立安装命令见[完整清单](docs/plugins.md)。
 
 ## 快速开始
 
@@ -56,7 +57,7 @@ bun run smoke:pi
 
 模型访问权限在本地 Pi 中单独配置；仓库不提供 Advisor 审核模型选择或 Memory Embedding 服务凭证。使用自定义 agent 目录时，setup、update 和启动需使用相同的 `PI_CODING_AGENT_DIR`；个别插件状态仍使用固定的 home 路径。
 
-**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 Advisor、Memory、Remote SSH 和 Statusline 注册为独立本地包，`pi list` 可分别查看。不要再安装这些本地插件的上游版本。
+**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 Advisor、Memory、Remote SSH、Statusline 和 GPT Fast 注册为独立本地包，`pi list` 可分别查看。不要再安装这些本地插件的上游版本。
 
 ## 日常入口
 
@@ -76,6 +77,7 @@ packages/
   memory/                本地维护的 BCP 记忆增强扩展
   remote-ssh/            自研远程执行扩展与 worker
   statusline/             原生底栏派生插件
+  gpt-fast-mode/          按模型名单切换 priority
 config/                  公开默认配置、固定版本配套插件来源
 scripts/                 环境安装与集成脚本
 test/                    跨包/配置回归测试

@@ -32,7 +32,7 @@ export function packageIdentity(source: string, agentDir: string): string {
   return `local:${path}`;
 }
 
-export const localPlugins = ["remote-ssh", "advisor", "memory", "statusline"] as const;
+export const localPlugins = ["remote-ssh", "advisor", "memory", "statusline", "gpt-fast-mode"] as const;
 const resourceTypes = ["extensions", "themes", "skills", "prompts"] as const;
 
 // Pi patterns match package-relative paths, absolute paths and (for globs) basenames.
@@ -70,6 +70,9 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     resolve(root, "packages/memory"), resolve(legacyRoot, "packages/memory"),
     "npm:@narumitw/pi-statusline", "npm:@fuyao/pi-statusline",
     resolve(root, "packages/statusline"), resolve(legacyRoot, "packages/statusline"),
+    "npm:@tunnckocore/pi-gpt-fast-mode", "npm:@fuyao/pi-gpt-fast-mode",
+    "git:github.com/tunnckoCore/pi-gpt-fast-mode",
+    resolve(root, "packages/gpt-fast-mode"), resolve(legacyRoot, "packages/gpt-fast-mode"),
   ].map(identity));
   const managedIds = new Set(sources.map(identity));
   // These Goal packages register the same commands/tools; never retain both.

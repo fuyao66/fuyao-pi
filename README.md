@@ -14,6 +14,7 @@ Personal Pi Agent environment with customized extensions and configuration.
 | [Advisor](packages/advisor/UPSTREAM.md) | Locally maintained derivative | Second-model review of BCP-transformed context instead of raw history replay |
 | [Memory](packages/memory/UPSTREAM.md) | Locally maintained derivative | Cross-session BCP summary search, project scope, incremental synchronization and optional embedding-based hybrid retrieval |
 | [Statusline](packages/statusline/README.md) | Locally maintained derivative | Native footer, cumulative cache rate and responsive wrapping |
+| [GPT Fast](packages/gpt-fast-mode/README.md) | Locally maintained derivative | Exact user-model allowlist and priority request toggle |
 | `billion-context-pi` (BCP) | Community, directly installable | Context compression, recovery, diagnostics and sub-agent delegation |
 | `@juicesharp/rpiv-ask-user-question` | Community, directly installable | Structured single/multiple-choice questions and custom input |
 | `@juicesharp/rpiv-todo` | Community, directly installable | Task lists, status tracking and dependencies |
@@ -21,7 +22,7 @@ Personal Pi Agent environment with customized extensions and configuration.
 | `@narumitw/pi-goal` | Community, directly installable | Session goals with bounded automatic progress and completion/blocker reporting |
 | `pi-invisible-continue` | Community, directly installable | Automatic continuation signals to reduce manual continue prompts |
 
-The four local packages are built/configured through this repository; the six community packages use upstream implementations. See the [full inventory](docs/plugins.md) for versions, upstream links, local modifications and standalone installation commands.
+The five local packages are built/configured through this repository; the six community packages use upstream implementations. See the [full inventory](docs/plugins.md) for versions, upstream links, local modifications and standalone installation commands.
 
 ## Quick start
 
@@ -56,7 +57,7 @@ bun run smoke:pi
 
 Configure model access separately in your local Pi environment. Advisor model selection and Memory embedding service credentials are not supplied by this repository. For a custom agent directory, use the same `PI_CODING_AGENT_DIR` for setup, update and launch; some plugin-specific state still uses fixed home-directory paths.
 
-**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Setup registers Advisor, Memory, Remote SSH and Statusline as separate local packages, visible in `pi list`. Do not also install the upstream versions of these local plugins.
+**Clone and build is the supported installation path.** A bare `pi install git:github.com/fuyao66/fuyao-pi` does not build workers or install the companion profile. Setup registers Advisor, Memory, Remote SSH, Statusline and GPT Fast as separate local packages, visible in `pi list`. Do not also install the upstream versions of these local plugins.
 
 ## Everyday entry points
 
@@ -76,6 +77,7 @@ packages/
   memory/                Maintained BCP memory enhancement
   remote-ssh/            First-party remote execution extension and worker
   statusline/             Native footer derivative
+  gpt-fast-mode/          Allowlisted priority tier toggle
 config/                  Public settings and pinned companion sources
 scripts/                 Environment setup and integration tooling
 test/                    Cross-package/profile regression tests
