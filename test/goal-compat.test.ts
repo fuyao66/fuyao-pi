@@ -66,9 +66,9 @@ for (const goalFirst of [false, true]) {
       await runner.emitBeforeAgentStart("user continuing task", undefined, { cwd: dir });
       await runner.emit({ type: "agent_start" });
       await runner.emit({ type: "agent_end", messages: [reply("intermediate progress")] });
-      await runner.emit({ type: "agent_settled" });
+      await runner.emit({ type: "agent_settled", aborted: false });
       expect(queued).toHaveLength(1);
-      await runner.emit({ type: "agent_settled" });
+      await runner.emit({ type: "agent_settled", aborted: false });
       expect(queued).toHaveLength(1);
       await session.reload();
       captureFollowUps();
@@ -85,7 +85,17 @@ for (const goalFirst of [false, true]) {
       expect(completed).toContain("Goal mode is inactive.");
       expect(completed).not.toContain("RAW_FOLDED_EVIDENCE");
       await session.extensionRunner.emit({ type: "agent_end", messages: [reply("done")] });
-      await session.extensionRunner.emit({ type: "agent_settled" });
+      await session.extensionRunner.emit({ type: "agent_settled", aborted: false });
+      expect(queued).toHaveLength(1);
+      // Escape/cancellation must pause the goal rather than enqueue more work.
+      sm.appendCustomEntry("goal-state", { goal });
+      await session.reload();
+      captureFollowUps();
+      await session.extensionRunner.emitBeforeAgentStart("cancel test", undefined, { cwd: dir });
+      await session.extensionRunner.emit({ type: "agent_start" });
+      await session.extensionRunner.emit({ type: "agent_end", messages: [{ ...reply("cancelled"), stopReason: "aborted" }] });
+      await session.extensionRunner.emit({ type: "agent_settled", aborted: true });
+      expect(state()).toMatchObject({ id: goal.id, status: "paused" });
       expect(queued).toHaveLength(1);
       expect(errors).toEqual([]);
     } finally {

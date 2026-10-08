@@ -23,6 +23,17 @@ controls remain local and workspace tools remain remote. Real SSH/ARM execution 
 not covered. Resume Goal with `/goal resume`, not `/continue`; experimental old queue
 states are outside the tested migration contract.
 
+## Pi runtime upgrade validation
+
+The Pi runtime and companion versions are pinned in `config/plugins.json`.
+The reviewed runtime upgrade preserved the BCP pin and required no Memory migration.
+Validation covered both Goal/BCP load orders, real compression, reload/completion,
+and aborted-run pausing; Remote SSH workers were rebuilt for both architectures.
+The compiled x64 worker and inherited child passed the SSH process shim, including
+text/image `structuredContent` forwarding. The full profile loaded without extension
+errors or warnings; native Codemode read text and images in an isolated SDK session.
+No paid model calls, real SSH server or ARM execution were involved.
+
 ## 0.1.82 → 0.1.83
 
 [Upstream comparison](https://github.com/ranxianglei/billion-context-pi/compare/v0.1.82...v0.1.83)

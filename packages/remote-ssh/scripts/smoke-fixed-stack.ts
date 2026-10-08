@@ -34,6 +34,7 @@ try {
   await writeFile(join(cwd, "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP8AAP8FAAH/+lyI0QAAAABJRU5ErkJggg==", "base64"));
   const image = await client.execute("read", "image", { path: "pixel.png" });
   assert.ok(JSON.stringify(image).includes('"type":"image"'), JSON.stringify(image));
+  assert.equal((image as { structuredContent: { type: string } }).structuredContent.type, "image");
   // 3000x1 synthetic PNG exceeds Pi's default inline width and forces Photon resizing.
   await writeFile(join(cwd, "wide.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAC7gAAAABCAYAAABO1+M+AAAAJUlEQVR4nO3DQQ0AAAwDofNvupOxDyS0mqqqqqqqqqqqqqqqfj+cQlnqxmLa0gAAAABJRU5ErkJggg==", "base64"));
   const resized = JSON.stringify(await client.execute("read", "resize", { path: "wide.png" }));
@@ -72,6 +73,9 @@ try {
   const result = await session.getToolDefinition("read")!.execute("child-read", { path: "probe.txt" }, undefined, undefined, session.extensionRunner.createToolContext("child-read", undefined));
   assert.ok(JSON.stringify(result).includes("remote-modified"), JSON.stringify(result));
   assert.ok(!JSON.stringify(result).includes("WRONG_LOCAL_FILE"));
+  assert.equal(result.structuredContent, "remote-modified\n");
+  const childImage = await session.getToolDefinition("read")!.execute("child-image", { path: "pixel.png" }, undefined, undefined, session.extensionRunner.createToolContext("child-image", undefined));
+  assert.equal((childImage.structuredContent as { type: string }).type, "image");
   console.log("PASS: compiled core tools + built extension inherited restricted Pi child (SSH process shim)");
 } finally {
   if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); }
