@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const SUPPORTED_MODELS = new Set([
   "cpa/gpt-5.5",
@@ -16,6 +16,7 @@ export const SUPPORTED_MODELS = new Set([
 export const FAST_SERVICE_TIER = "priority";
 export const CONFIG_FIELD = "pi-gpt-fast-mode";
 export const KEYBINDING_FIELD = CONFIG_FIELD;
+export const STATUS_KEY = CONFIG_FIELD;
 export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
 
@@ -192,12 +193,22 @@ function announceState(ctx: unknown, enabled: boolean, models: ReadonlySet<strin
   notify(ctx, `GPT Fast mode enabled, but ${currentModelLabel(ctx)} is not supported.`, "warning");
 }
 
+export function formatFastStatus(enabled: boolean, model: PiModel | undefined, models: ReadonlySet<string> = SUPPORTED_MODELS): string | undefined {
+  return enabled && isSupportedModel(model, models) ? "⚡ Fast" : undefined;
+}
+
 export default function fastModeExtension(pi: ExtensionAPI): void {
   let enabled = loadDefaultEnabled();
   let models = loadSupportedModels();
 
-  async function toggle(ctx: unknown): Promise<void> {
+  function updateStatus(ctx: ExtensionContext, model: PiModel | undefined = ctx.model): void {
+    if (ctx.mode !== "tui") return;
+    ctx.ui.setStatus(STATUS_KEY, formatFastStatus(enabled, model, models));
+  }
+
+  async function toggle(ctx: ExtensionContext): Promise<void> {
     enabled = !enabled;
+    updateStatus(ctx);
     announceState(ctx, enabled, models);
   }
 
@@ -217,9 +228,18 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
     });
   }
 
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
     enabled = loadDefaultEnabled();
     models = loadSupportedModels();
+    updateStatus(ctx);
+  });
+
+  pi.on("model_select", (event, ctx) => {
+    updateStatus(ctx, event.model);
+  });
+
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (ctx.mode === "tui") ctx.ui.setStatus(STATUS_KEY, undefined);
   });
 
   pi.on("before_provider_request", (event, ctx) => {

@@ -36,6 +36,7 @@ If both files exist, `pi-statusline.json` wins.
 | `segments` | Ordered unique segment names and `line_break` | Control visibility, order, and rows |
 | `segmentText` | Per-segment `prefix` and `suffix`; model truncation fields | Format Pi-owned dynamic values |
 | `extensionStatusIcons` | Raw status key or `namespace:*` to icon string | Customize extension status icons |
+| `showExtensionStatuses` | Boolean (default `true`) | Show separate extension status rows; does not control main segments |
 
 All fields are optional in an existing document.
 Missing fields use defaults.
@@ -125,7 +126,8 @@ It changes display only—the provider model ID is untouched.
 Terminal control sequences in model IDs are removed at render time, and unsafe configured symbols are rejected.
 An empty `truncationSymbol` truncates without a marker.
 pi-statusline treats model IDs as opaque strings and does not parse paths, repositories, GGUF suffixes, or quantization names.
-At very narrow widths, the existing responsive priorities may still omit the model rather than overflow the terminal.
+At narrow widths, the main line wraps instead of dropping configured segments.
+A glyph wider than the entire terminal cannot be displayed.
 
 ## 🧩 Advanced layout
 
@@ -150,7 +152,7 @@ Closing the screen does not roll it back.
 Available data segments:
 
 ```text
-brand provider model thinking cwd branch tools context tokens cache cost time turn
+brand provider model thinking fast cwd branch tools context tokens cache cost time turn
 ```
 
 Data segments must be unique.
@@ -170,6 +172,18 @@ An empty `segments` array hides the main powerline while extension statuses can 
 ## 🔌 Extension statuses and icons
 
 Other extension statuses appear below the main powerline, wrap to terminal width, and are limited to five items.
+Set `showExtensionStatuses: false`, or use **Advanced → Extension status rows**, to
+hide these separate rows. This does not stop hooks, clear their status data or hide
+the main powerline.
+
+The `fast` segment uses the local GPT Fast plugin’s public `pi-gpt-fast-mode` status:
+`⚡ Fast` appears only when enabled and eligible, with one space between icon and
+label by default. Disabled or unsupported models leave no segment or placeholder.
+Values shown inline are not repeated below. The indicator is client eligibility,
+not proof the provider accepted priority. Configure `palette.fast`
+and `segmentText.fast` like any other main segment; `extensionStatusIcons` only
+affects separate rows.
+
 Icons use this order:
 
 1. Exact configured raw key, such as `goal` or `foo:server`.

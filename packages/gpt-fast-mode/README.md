@@ -33,6 +33,20 @@ state; `/fast` changes only in-memory state and resets on session switch/reload.
 Configuration lookup retains upstream behavior: `PI_CODING_AGENT_DIR`, XDG Pi
 locations, then `~/.pi/agent`. Project settings are not read.
 
+In the TUI, the public `setStatus()` API publishes `⚡ Fast` only when enabled and
+the selected model matches the allowlist. The icon and label have one space between
+them. When disabled, unsupported or absent, the status is removed entirely.
+
+It updates on `/fast`, the shortcut, model selection and session start/reload; it
+is cleared on shutdown. The local Statusline can display it inline with the `fast`
+segment, using its configured palette and wrapping; a recognized inline value is
+not repeated in a separate row. Hiding extension status rows does not hide this
+main-line segment. Without the segment, the usual separate-row behavior applies
+when extension rows are enabled. Non-TUI modes do not publish
+footer status. The indicator describes client eligibility, not backend confirmation: the
+request payload must still match the selected model, and the service may ignore
+or reject priority. Model/lifecycle updates do not create extra notifications.
+
 Only requests passing through this Pi instance’s payload hook are affected; this
 is not a global switch for independent sub-agents or direct provider calls.
 [Source and local changes](UPSTREAM.md).

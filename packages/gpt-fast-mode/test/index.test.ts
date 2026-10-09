@@ -43,7 +43,7 @@ test("upstream declarations migrate to local once without duplicate commands", (
   expect(mergeProfile(first, {}, sources, "/repo", "/agent")).toEqual(first);
 });
 
-test("toggle is off by default, resets on session start and only registers command/shortcut/request hook", async () => {
+test("toggle defaults off, resets on session start and keeps request behavior independent of UI", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fuyao-fast-unit-"));
   const previous = process.env.PI_CODING_AGENT_DIR;
   try {
@@ -54,8 +54,8 @@ test("toggle is off by default, resets on session start and only registers comma
     const commands = new Map<string, { handler: (...args: any[]) => any }>();
     fastMode({ registerCommand: (name: string, c: any) => commands.set(name, c), registerShortcut: () => { throw new Error("shortcuts disabled"); }, on: (name: string, h: any) => handlers.set(name, h) } as unknown as ExtensionAPI);
     expect([...commands.keys()]).toEqual(["fast"]);
-    expect([...handlers.keys()]).toEqual(["session_start", "before_provider_request"]);
-    const ctx = { model, ui: { notify: () => {} } };
+    expect([...handlers.keys()]).toEqual(["session_start", "model_select", "session_shutdown", "before_provider_request"]);
+    const ctx = { mode: "print", model, ui: { notify: () => {}, setStatus: () => { throw new Error("headless status must not be set"); } } };
     const request = () => handlers.get("before_provider_request")!({ payload }, ctx);
     expect(request()).toBeUndefined();
     await commands.get("fast")!.handler("", ctx);
@@ -63,8 +63,10 @@ test("toggle is off by default, resets on session start and only registers comma
     await commands.get("fast")!.handler("", ctx);
     expect(request()).toBeUndefined();
     await commands.get("fast")!.handler("", ctx);
-    handlers.get("session_start")!();
+    handlers.get("session_start")!({}, ctx);
     expect(request()).toBeUndefined();
+    handlers.get("model_select")!({ model }, ctx);
+    handlers.get("session_shutdown")!({}, ctx);
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
     await rm(dir, { recursive: true, force: true });

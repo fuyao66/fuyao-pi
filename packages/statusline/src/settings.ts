@@ -69,6 +69,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
       truncationDirection: "start",
     },
     thinking: { prefix: "🧠 ", suffix: "" },
+    fast: { prefix: "⚡ ", suffix: "" },
     cwd: { prefix: "📁 ", suffix: "" },
     branch: { prefix: "🌿 ", suffix: "" },
     tools: { prefix: "", suffix: "" },
@@ -80,6 +81,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
     turn: { prefix: "🔁 #", suffix: "" },
   },
   extensionStatusIcons: DEFAULT_EXTENSION_STATUS_ICONS,
+  showExtensionStatuses: true,
 };
 
 const DEFAULT_STATUSLINE_DOCUMENT_CONFIG = {
@@ -89,6 +91,7 @@ const DEFAULT_STATUSLINE_DOCUMENT_CONFIG = {
   segments: DEFAULT_SEGMENTS,
   segmentText: DEFAULT_STATUSLINE_CONFIG.segmentText,
   extensionStatusIcons: DEFAULT_DOCUMENT_EXTENSION_STATUS_ICONS,
+  showExtensionStatuses: DEFAULT_STATUSLINE_CONFIG.showExtensionStatuses,
 } satisfies Omit<StatuslineConfig, "palette">;
 
 export const DEFAULT_STATUSLINE_DOCUMENT = `${JSON.stringify(DEFAULT_STATUSLINE_DOCUMENT_CONFIG, null, "\t")}\n`;
@@ -146,6 +149,7 @@ export function normalizeStatuslineConfig(value: unknown): {
     "segments",
     "segmentText",
     "extensionStatusIcons",
+    "showExtensionStatuses",
   ]);
   for (const key of Object.keys(value)) {
     if (!knownRoot.has(key)) diagnostics.push(unknownDiagnostic(key));
@@ -158,6 +162,11 @@ export function normalizeStatuslineConfig(value: unknown): {
   }
   normalizeEnum(value, "density", DENSITIES, config, diagnostics);
   normalizeEnum(value, "separator", SEPARATOR_NAMES, config, diagnostics);
+  if (value.showExtensionStatuses !== undefined) {
+    if (typeof value.showExtensionStatuses !== "boolean") {
+      diagnostics.push(invalidDiagnostic("showExtensionStatuses", "Expected a boolean"));
+    } else config.showExtensionStatuses = value.showExtensionStatuses;
+  }
 
   if (value.segments !== undefined) {
     if (!Array.isArray(value.segments)) {

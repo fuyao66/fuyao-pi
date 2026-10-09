@@ -5,6 +5,7 @@ export const SEGMENT_NAMES = [
   "provider",
   "model",
   "thinking",
+  "fast",
   "cwd",
   "branch",
   "tools",
@@ -63,6 +64,7 @@ export interface StatuslineConfig {
   segments: ConfigSegmentName[];
   segmentText: Record<SegmentName, SegmentTextConfig> & { model: ModelSegmentTextConfig };
   extensionStatusIcons: Record<string, string>;
+  showExtensionStatuses: boolean;
 }
 
 export interface RenderSegment {

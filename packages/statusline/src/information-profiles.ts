@@ -6,8 +6,8 @@ export type InformationProfile = InformationProfileName | "custom";
 
 export const INFORMATION_PROFILES: Readonly<Record<InformationProfileName, readonly SegmentName[]>> = {
   minimal: ["model", "cwd", "branch", "context"],
-  balanced: ["model", "thinking", "cwd", "branch", "tools", "context", "time"],
-  detailed: ["provider", "model", "thinking", "cwd", "branch", "tools", "context", "tokens", "cache", "cost", "time"],
+  balanced: ["model", "thinking", "fast", "cwd", "branch", "tools", "context", "time"],
+  detailed: ["provider", "model", "thinking", "fast", "cwd", "branch", "tools", "context", "tokens", "cache", "cost", "time"],
 };
 
 export function inferInformationProfile(segments: readonly ConfigSegmentName[]): InformationProfile {

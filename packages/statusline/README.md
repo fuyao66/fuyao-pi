@@ -20,8 +20,16 @@ preserved, including palette, segment order, model shortening and icons.
 - Layout: one row when it fits, otherwise two balanced rows when possible, keeping
   segment order. Extremely narrow screens can need more rows; no priority-based
   segment removal. A glyph wider than the whole terminal cannot be displayed.
-  Explicit `line_break` settings still work. Extension statuses remain separate
-  footer rows as upstream; two rows describes the main statusline, not total height.
+  Explicit `line_break` settings still work.
+- Fast: the `fast` segment displays `⚡ Fast` in the main line only when enabled
+  and eligible, without a duplicate status row. Disabled or unsupported models
+  leave no segment or placeholder. This indicates client eligibility, not provider
+  confirmation. Its icon and palette are configurable like other main segments.
+- Extension rows: `showExtensionStatuses: false` hides all separate extension
+  status rows (including sub-agent usage), but keeps main segments and the
+  underlying hooks running. Default `true` preserves existing behavior; change it
+  in `/statusline` → Advanced → Extension status rows. Two-row wrapping describes
+  the main statusline, not the total height when extra status rows are enabled.
 
 Only footer rendering changes. No additional model calls, editor modifications,
 or keyboard overrides. Git status continues using upstream local Git commands;

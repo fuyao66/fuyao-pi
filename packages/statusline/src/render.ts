@@ -35,7 +35,8 @@ export interface RuntimeState extends ExtensionStatusRuntime {
   requestRender?: () => void;
 }
 const GITHUB_PR_KEY = "github-pr";
-const GITHUB_PR_STATUS_KEYS = new Set([GITHUB_PR_KEY]);
+const FAST_STATUS_KEY = "pi-gpt-fast-mode";
+const FAST_ENABLED_STATUS = "⚡ Fast";
 export function renderStatusline(
   width: number,
   ctx: ExtensionContext,
@@ -83,16 +84,22 @@ export function renderExtensionStatusline(
   mainLine: string,
   trueColor = true,
 ): string[] {
+  if (!config.showExtensionStatuses) return [];
   const statuses = footerData.getExtensionStatuses();
+  const hiddenKeys = new Set<string>();
+  if (mainLine.length > 0 && config.segments.includes("fast") && fastStatusValue(statuses)) {
+    hiddenKeys.add(FAST_STATUS_KEY);
+  }
   const prContext = prContextFromStatuses(statuses);
   const rendersPrInline = prContext !== undefined && config.segments.includes("branch") &&
     Boolean(footerData.getGitBranch()) && mainLine.length > 0;
+  if (rendersPrInline) hiddenKeys.add(GITHUB_PR_KEY);
   const status = formatExtensionStatuses(
     statuses,
     theme,
     config,
     runtime,
-    rendersPrInline ? GITHUB_PR_STATUS_KEYS : undefined,
+    hiddenKeys,
     trueColor,
   );
   return wrapExtensionStatusline(status, width);
@@ -123,6 +130,10 @@ function buildSegment(
     }
     case "thinking":
       return segment(name, runtime.thinkingLevel, config, thinkingColor(runtime.thinkingLevel), "header");
+    case "fast": {
+      const value = fastStatusValue(footerData.getExtensionStatuses());
+      return value ? segment(name, value, config, "accent", "header") : undefined;
+    }
     case "branch": {
       const branch = footerData.getGitBranch();
       const pr = branch ? prContextFromStatuses(footerData.getExtensionStatuses()) : undefined;
@@ -185,6 +196,10 @@ function buildSegment(
     case "turn":
       return segment(name, `${runtime.turnCount}`, config, "accent", "meter");
   }
+}
+
+function fastStatusValue(statuses: ReadonlyMap<string, string>): string | undefined {
+  return statuses.get(FAST_STATUS_KEY) === FAST_ENABLED_STATUS ? "Fast" : undefined;
 }
 
 function segment(

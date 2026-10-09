@@ -39,12 +39,13 @@ const SEGMENT_DESCRIPTIONS: Record<SegmentName, string> = {
   provider: "Current model provider",
   model: "Current model name",
   thinking: "Current thinking level",
+  fast: "GPT Fast mode indicator (only when enabled and eligible)",
   cwd: "Current working directory",
   branch: "Git branch, status, and linked pull request",
   tools: "Current tool and streaming activity",
   context: "Current context-window usage",
   tokens: "Session token totals",
-  cache: "Prompt-cache reads, writes, and latest hit rate",
+  cache: "Prompt-cache reads, writes, and session-average hit rate",
   cost: "Session cost",
   time: "Current local time",
   turn: "Current session turn count",
@@ -121,7 +122,7 @@ async function showMainMenu(ctx: ExtensionCommandContext, options: StatuslineCom
   const { defineMenu, runMenu } = await import("@narumitw/pi-tui-kit");
   if (owner.signal.aborted || !owner.isCurrent()) return;
   type Screen = "main" | "advanced" | "information";
-  type Action = "appearance" | "setInformation" | "layout" | "edit" | "status" | "help" | "back";
+  type Action = "appearance" | "setInformation" | "layout" | "toggleExtensionStatuses" | "edit" | "status" | "help" | "back";
   const menu = defineMenu<undefined, Screen, Action, ExtensionCommandContext>({
     start: "main",
     screens: {
@@ -180,6 +181,11 @@ async function showMainMenu(ctx: ExtensionCommandContext, options: StatuslineCom
               label: `Custom layout (${visibleSegmentCount}/${SEGMENT_NAMES.length} shown)`,
               action: "layout",
             },
+            {
+              id: "extensionStatuses",
+              label: `Extension status rows (${config.showExtensionStatuses ? "shown" : "hidden"})`,
+              action: "toggleExtensionStatuses",
+            },
             { id: "edit", label: EDIT_SETTINGS_LABEL, action: "edit" },
             { id: "back", label: "Back", action: "back" },
           ],
@@ -200,6 +206,20 @@ async function showMainMenu(ctx: ExtensionCommandContext, options: StatuslineCom
       },
       layout: async () => {
         await chooseSegments(ctx, options);
+        return { kind: "close" };
+      },
+      toggleExtensionStatuses: async () => {
+        const current = options.getLoaded();
+        try {
+          const { parsed, rawDocument: previousDocument } = editableSettings(current, "changing extension status visibility");
+          parsed.showExtensionStatuses = !current.config.showExtensionStatuses;
+          const loaded = applySegmentsDocumentChange({
+            nextDocument: `${JSON.stringify(parsed, null, "\t")}\n`, previousDocument,
+          }, ctx, options);
+          ctx.ui.notify(`Extension status rows ${loaded.config.showExtensionStatuses ? "shown" : "hidden"}.`, "info");
+        } catch (error) {
+          ctx.ui.notify(`Extension status visibility was not saved: ${formatError(error)}`, "error");
+        }
         return { kind: "close" };
       },
       edit: async () => {
@@ -830,6 +850,7 @@ function showStatus(ctx: ExtensionCommandContext, options: StatuslineCommandOpti
       `separator: ${loaded.config.separator}`,
       `information: ${inferInformationProfile(loaded.config.segments)}`,
       `segments: ${loaded.config.segments.join(", ") || "none"}`,
+      `extension status rows: ${loaded.config.showExtensionStatuses ? "shown" : "hidden"}`,
       diagnostics ? `warnings: ${diagnostics}` : "warnings: none",
     ].join("\n"),
     loaded.diagnostics.length > 0 ? "warning" : "info",
@@ -846,11 +867,12 @@ function showHelp(ctx: ExtensionCommandContext, settingsPath: string) {
       "/statusline help — show this help",
       "Menu actions: Appearance, Information, Advanced, Status, Help.",
       "Information levels: minimal, balanced, detailed; any other segment array is custom.",
-      "Advanced actions: Custom layout, Edit settings JSON, Back.",
+      "Advanced actions: Custom layout, Extension status rows, Edit settings JSON, Back.",
       `Settings: ${settingsPath}`,
-      "Fields: palettePreset, palette, density, separator, segments, segmentText, extensionStatusIcons",
+      "Fields: palettePreset, palette, density, separator, segments, segmentText, extensionStatusIcons, showExtensionStatuses",
       "Named presets ignore but preserve palette; custom uses its per-segment fg/bg colors.",
-      "Responsive rows retain context, model, location, and active work before decorative data.",
+      "Responsive rows wrap all configured segments instead of dropping them.",
+      "Fast uses the pi-gpt-fast-mode status in the main line; showExtensionStatuses controls only separate extension rows.",
       "Custom layout can show, hide, reorder, or split data segments across rows.",
       "Press M for move mode, Alt+Up/Alt+Down for quick move, and B for a line break.",
       "Line breaks (line_break) may repeat when separated by data segments, but cannot be consecutive.",
