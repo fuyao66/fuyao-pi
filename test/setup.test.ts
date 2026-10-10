@@ -3,9 +3,9 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { localPlugins, mergeProfile, packageIdentity, rebaseFilters, setup } from "../scripts/setup.ts";
+import { billionConfigPath, mergeBillionConfig, localPlugins, mergeProfile, packageIdentity, rebaseFilters, setup } from "../scripts/setup.ts";
 
-const sources = ["npm:billion-context-pi@0.1.83", "npm:@juicesharp/rpiv-todo@2.11.0"];
+const sources = ["npm:billion-context@0.1.189", "npm:@juicesharp/rpiv-todo@2.11.0"];
 const upstreamUi = [
   "git:github.com/beautifulrem/pi-sakura-cyberdeck",
   "git:https://github.com/beautifulrem/pi-sakura-cyberdeck.git@abc",
@@ -63,9 +63,12 @@ describe("personal Pi profile", () => {
     expect(existing.extensions).toHaveLength(3);
   });
 
-  test("replaces upstream and standalone Advisor declarations without duplicates", () => {
+  test("disables upstream and local Advisor and does not re-enable on repeated setup", () => {
     const packages = ["npm:@juicesharp/rpiv-advisor@2.11.0", { source: "npm:@fuyao/pi-advisor", extensions: [] }, `${root}/packages/advisor`, "/workspace/pi-ssh-remote/packages/advisor"];
-    expect(mergeProfile({ packages }, {}, sources, root, agentDir).packages).toEqual([sources[0], ...locals, sources[1]]);
+    const result = mergeProfile({ packages }, {}, sources, root, agentDir);
+    expect(result.packages).toEqual([sources[0], ...locals, sources[1]]);
+    expect(result.packages!.some(entry => (typeof entry === 'string' ? entry : entry.source).includes('advisor'))).toBe(false);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
   });
 
   test("replaces Memory git aliases and standalone fork without duplicate tools", () => {
@@ -73,6 +76,17 @@ describe("personal Pi profile", () => {
     const result = mergeProfile({ packages }, {}, sources, root, agentDir);
     expect(result.packages).toEqual([sources[0], ...locals, sources[1], "npm:unrelated"]);
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+  });
+
+  test("renames Memory once without changing explicit resource enablement", () => {
+    const old = { source: `${root}/packages/memory`, autoload: false,
+      extensions: [`-${root}/packages/memory/src/optional.ts`, "!optional.ts"], themes: [] };
+    const result = mergeProfile({ packages: [old] }, {}, sources, root, agentDir);
+    expect(result.packages).toContainEqual({ ...old, source: `${root}/packages/bili-memory`,
+      extensions: [`-${root}/packages/bili-memory/src/optional.ts`, "!optional.ts"] });
+    expect(result.packages!.some(e => (typeof e === 'string' ? e : e.source).endsWith('/packages/memory'))).toBe(false);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+    expect(old.source).toBe(`${root}/packages/memory`);
   });
 
   test("replaces upstream Statusline once and retains the local package on repeat setup", () => {
@@ -104,7 +118,7 @@ describe("personal Pi profile", () => {
     const result = mergeProfile({ packages: [filtered] }, {}, sources, root, agentDir);
     for (const name of localPlugins) {
       expect(result.packages).toContainEqual({ source: `${root}/packages/${name}`,
-        extensions: [`!${root}/packages/advisor/optional.ts`, `!${root}/packages/memory/optional.ts`], themes: [] });
+        extensions: [`!${root}/packages/advisor/optional.ts`, `!${root}/packages/bili-memory/optional.ts`], themes: [] });
     }
     expect(result.packages).toHaveLength(sources.length + localPlugins.length);
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
@@ -127,7 +141,7 @@ describe("personal Pi profile", () => {
   });
 
   test("keeps child resource filters on subsequent setup", () => {
-    const child = { source: `${root}/packages/memory`, extensions: ["!optional.ts"] };
+    const child = { source: `${root}/packages/bili-memory`, extensions: ["!optional.ts"] };
     const result = mergeProfile({ packages: [child] }, {}, sources, root, agentDir);
     expect(result.packages).toContainEqual(child);
     expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
@@ -139,7 +153,7 @@ describe("personal Pi profile", () => {
       { source: "/workspace/pi-ssh-remote/packages/memory", extensions: ["-/workspace/pi-ssh-remote/packages/memory/optional.ts"] },
     ] }, {}, sources, root, agentDir);
     expect(result.packages!.map(e => typeof e === "string" ? e : e.source)).not.toContain(root);
-    expect(result.packages).toContainEqual({ source: `${root}/packages/memory`, extensions: [`-${root}/packages/memory/optional.ts`] });
+    expect(result.packages).toContainEqual({ source: `${root}/packages/bili-memory`, extensions: [`-${root}/packages/bili-memory/optional.ts`] });
     expect(() => rebaseFilters(["!{index.ts,packages/ui/**}"], root)).toThrow(/manual/);
   });
 
@@ -178,6 +192,22 @@ describe("personal Pi profile", () => {
     expect(() => mergeProfile({ packages: [{}] } as any, {}, sources, root, agentDir)).toThrow();
   });
 
+  test("replaces the old compressor once without widening filtered enablement", () => {
+    const result = mergeProfile({ packages: ['npm:billion-context-pi@0.1.83', 'git:github.com/ranxianglei/billion-context-pi', 'npm:unrelated'] }, {}, sources, root, agentDir);
+    expect(result.packages).toEqual([sources[0], ...locals, sources[1], 'npm:unrelated']);
+    expect(mergeProfile(result, {}, sources, root, agentDir)).toEqual(result);
+    expect(() => mergeProfile({ packages: [{ source: 'npm:billion-context-pi', extensions: [] }] }, {}, sources, root, agentDir)).toThrow('explicit resource filters');
+    const explicit = { source: sources[0], extensions: [] };
+    expect(mergeProfile({ packages: [explicit, 'npm:billion-context-pi'] }, {}, sources, root, agentDir).packages).toContainEqual(explicit);
+  });
+
+  test("Billion Context respects config path overrides and keeps critical repairs enabled", () => {
+    expect(billionConfigPath({}, '/home/test')).toBe('/home/test/.config/billion-context/billion-context.json');
+    expect(billionConfigPath({ XDG_CONFIG_HOME: '/custom' }, '/home/test')).toBe('/custom/billion-context/billion-context.json');
+    expect(billionConfigPath({ BILI_CONFIG_FILE: '/explicit.json', XDG_CONFIG_HOME: '/custom' })).toBe('/explicit.json');
+    expect(mergeBillionConfig({ providers: { custom: true }, autoUpdate: true, advisoryCheck: false })).toEqual({ providers: { custom: true }, autoUpdate: false, advisoryCheck: true });
+  });
+
   test("preview is read-only; apply backs up, writes privately and is idempotent", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "fuyao-pi-setup-"));
     try {
@@ -187,24 +217,24 @@ describe("personal Pi profile", () => {
       await writeFile(join(repo, "packages/remote-ssh/dist/pi-extension.js"), "");
       await writeFile(join(repo, "config/settings.json"), '{"theme":"system"}');
       await writeFile(join(repo, "config/plugins.json"), JSON.stringify({ packages: sources }));
-      const acp = join(tmp, "home", ".pi", "acp.json");
+      const acp = join(tmp, "home", ".config", "billion-context", "billion-context.json");
       await setup(agent, false, repo, acp);
       expect((await readdir(tmp)).sort()).toEqual(["repo"]);
       await mkdir(agent);
-      await mkdir(join(tmp, "home", ".pi"), { recursive: true });
+      await mkdir(join(tmp, "home", ".config", "billion-context"), { recursive: true });
       await writeFile(acp, '{"debug":true,"autoUpdate":true}\n');
       const original = '{"defaultModel":"private-model","customSecret":"do-not-export"}\n';
       await writeFile(join(agent, "settings.json"), original);
       await writeFile(join(agent, "auth.json"), "untouched");
       const result = await setup(agent, true, repo, acp);
       expect(await readFile(result.backup!, "utf8")).toBe(original);
-      expect(await readFile(result.acpBackup!, "utf8")).toBe('{"debug":true,"autoUpdate":true}\n');
+      expect(await readFile(result.biliBackup!, "utf8")).toBe('{"debug":true,"autoUpdate":true}\n');
       expect((await stat(result.backup!)).mode & 0o777).toBe(0o600);
-      expect((await stat(result.acpBackup!)).mode & 0o777).toBe(0o600);
+      expect((await stat(result.biliBackup!)).mode & 0o777).toBe(0o600);
       expect((await stat(join(agent, "settings.json"))).mode & 0o777).toBe(0o600);
       const written = JSON.parse(await readFile(join(agent, "settings.json"), "utf8"));
       expect(written.customSecret).toBe("do-not-export");
-      expect(JSON.parse(await readFile(acp, "utf8"))).toEqual({ debug: true, autoUpdate: false });
+      expect(JSON.parse(await readFile(acp, "utf8"))).toEqual({ debug: true, autoUpdate: false, advisoryCheck: true });
       expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("untouched");
       expect((await setup(agent, true, repo, acp)).changed).toBe(false);
       expect((await readdir(agent)).length).toBe(3);

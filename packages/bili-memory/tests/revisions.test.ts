@@ -6,16 +6,51 @@ import { join } from 'node:path';
 import { loadSqlite, MemoryDb } from '../src/extension.ts';
 import { HybridMemory } from '../src/hybrid.ts';
 import { sanitizeEmbeddingConfig } from '../src/embeddings.ts';
+import { recordMessageProjects, projectScope, scopeAllowedIds } from '../src/project-scope.ts';
+
+test('Billion Context v3 preserves attribution refs and rejects unknown versions without advancing watermarks', async () => {
+  await loadSqlite();
+  const dir = mkdtempSync(join(tmpdir(), 'memory-bili-contract-'));
+  const file = join(dir, 'session.json');
+  const store = new MemoryDb(join(dir, 'memory.sqlite')); store.open();
+  const scope = projectScope(dir);
+  const block = { blockId: 'b1', runId: 'r1', tier: 1, topic: 'fixture', summary: 'Bili contract fixture evidence',
+    effectiveMessageIds: ['h_message_a', 'h_message_b'], startRef: 'm00002', endRef: 'm00003', createdAt: 1 };
+  const envelope = { version: 3, id: 'session', payload: { version: 3, id: 'session', state: { blocks: [block] } } };
+  const ingest = () => store.ingestSourceFile(file, { kind: 'bili', project: 'fixture' }, true);
+  try {
+    writeFileSync(file, JSON.stringify(envelope));
+    assert.equal((await ingest()).inserted, 1);
+    const first = store.db.prepare('SELECT * FROM blocks').get();
+    assert.deepEqual(JSON.parse(first.msg_ids), block.effectiveMessageIds);
+    assert.deepEqual(scopeAllowedIds(store.db, [first.id], scope, false), [], 'refs alone are not workspace evidence');
+    recordMessageProjects(store.db, file, block.effectiveMessageIds, scope.id);
+    await ingest();
+    assert.deepEqual(scopeAllowedIds(store.db, [first.id], scope, false), [first.id]);
+    const watermark = store.db.prepare('SELECT * FROM source_watermarks').get();
+    for (const bad of [
+      { ...envelope, version: 4 },
+      { ...envelope, payload: { ...envelope.payload, version: 4 } },
+      { ...envelope, payload: { ...envelope.payload, id: 'different' } },
+      { ...envelope, id: '' },
+    ]) {
+      writeFileSync(file, JSON.stringify(bad));
+      assert.equal((await ingest()).ok, false);
+      assert.deepEqual(store.db.prepare('SELECT * FROM source_watermarks').get(), watermark);
+      assert.equal(store.db.prepare('SELECT summary FROM blocks').get().summary, block.summary);
+    }
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('source revisions keep row identity, update FTS/metadata and invalidate only content vectors', async () => {
   await loadSqlite();
   const dir = mkdtempSync(join(tmpdir(), 'memory-revisions-'));
   const path = join(dir, 'db.sqlite');
-  const source = join(dir, 'source.acp.json');
+  const source = join(dir, 'source.json');
   let store = new MemoryDb(path); store.open();
   let block = { blockId: 'b1', summary: 'oldneedle initial result', topic: 'oldtopic', messageIds: ['aaa11111'], startRef: 'm00001', endRef: 'm00002', tier: 1, createdAt: 1, compressedTokens: 10 };
-  const save = () => writeFileSync(source, JSON.stringify({ blocks: [block] }));
-  const ingest = (force = true) => store.ingestSourceFile(source, { kind: 'pi', project: 'test' }, force);
+  const save = () => writeFileSync(source, JSON.stringify({ version: 3, id: 'revision-fixture', payload: { version: 3, id: 'revision-fixture', state: { blocks: [block] } } }));
+  const ingest = (force = true) => store.ingestSourceFile(source, { kind: 'bili', project: 'test' }, force);
   const config = sanitizeEmbeddingConfig({ enabled: true, dimensions: 2, baseUrl: 'https://example.invalid/v1' });
   const client = { embed: async (texts: string[]) => texts.map(() => [1, 0]) };
   let events = 0;

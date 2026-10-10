@@ -16,7 +16,7 @@ export function sourceStamp(stat: { dev: number; ino: number; size: number; mtim
 }
 /** Read a validated regular-file descriptor, not a second path lookup. Best-effort
  * race detection, not a sandbox against an adversarial filesystem actor. */
-export async function readSourceFile(file: string): Promise<{ body: string; stat: Stats }> {
+export async function readSourceFile(file: string, maxBytes?: number): Promise<{ body: string; stat: Stats }> {
   await realSourcePath(file);
   const before = await fs.lstat(file);
   if (!before.isFile()) throw new Error('Source is not a regular file');
@@ -25,7 +25,23 @@ export async function readSourceFile(file: string): Promise<{ body: string; stat
     const opened = await handle.stat();
     if (sourceStamp(opened) !== sourceStamp(before)) throw new Error('Source changed before open');
     await realSourcePath(file);
-    const body = await handle.readFile('utf8');
+    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || opened.size > maxBytes)) {
+      throw new Error('Source exceeds the requested read budget');
+    }
+    // A bounded reader must not follow a concurrently growing file past its budget.
+    let body: string;
+    if (maxBytes === undefined) body = await handle.readFile('utf8');
+    else {
+      const buffer = Buffer.alloc(opened.size);
+      let offset = 0;
+      while (offset < buffer.length) {
+        const read = await handle.read(buffer, offset, buffer.length - offset, offset);
+        if (!read.bytesRead) break;
+        offset += read.bytesRead;
+      }
+      if (offset !== buffer.length) throw new Error('Source changed during read');
+      body = buffer.toString('utf8');
+    }
     const after = await handle.stat();
     const named = await fs.lstat(file);
     await realSourcePath(file);

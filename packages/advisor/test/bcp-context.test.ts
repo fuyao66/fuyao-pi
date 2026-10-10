@@ -12,7 +12,10 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 const reply = (text: string): AssistantMessage => ({ role: "assistant", content: [{ type: "text", text }], api: "openai-completions", provider: "test", model: "test", timestamp: Date.now(), stopReason: "stop", usage });
 
-test("real BCP compression hides journal originals from the actual Advisor side-call", async () => {
+// Advisor is retained but disabled in the new profile. This historical test is
+// opt-in only; passing it would not certify proxy-based Billion Context support.
+const legacyTest = process.env.FUYAO_TEST_LEGACY_ADVISOR === '1' ? test : test.skip;
+legacyTest("legacy-only BCP compression hides journal originals from the Advisor side-call", async () => {
   const dir = await mkdtemp(join(tmpdir(), "fuyao-advisor-bcp-"));
   const saved = process.env.PI_CODING_AGENT_DIR;
   const savedLog = process.env.ACP_LOG_FILE;

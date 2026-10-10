@@ -12,7 +12,7 @@ export class SourceCache {
     const old = this.entries.get(key);
     if (old) { this.bytes -= old.bytes; this.entries.delete(key); }
   }
-  async read(key: string, file: string, parse: (data: unknown) => SourceDocument): Promise<SourceDocument> {
+  async read(key: string, file: string, parse: (data: unknown, body: string) => SourceDocument): Promise<SourceDocument> {
     try {
       await realSourcePath(file);
       const stat = await fs.lstat(file);
@@ -25,7 +25,7 @@ export class SourceCache {
       }
       this.remove(key);
       const { body, stat: opened } = await readSourceFile(file);
-      const value = parse(JSON.parse(body));
+      const value = parse(JSON.parse(body), body);
       if (stamp !== sourceStamp(opened)) {
         return { state: 'missing/unreadable' }; // Atomic replacement raced the read: retry next operation.
       }

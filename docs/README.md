@@ -9,14 +9,14 @@
 | [Configuration](configuration.md) | 安装、配置优先级、备份回滚、自定义 agent 目录、旧仓库迁移 |
 | [Plugin inventory](plugins.md) | 自研/派生/引用归属，以及固定版本清单 |
 | [Maintenance](maintenance.md) | 新增扩展、测试、升级与提交原则 |
-| [BCP compatibility](bcp-compatibility.md) | 版本变化、兼容验证及已知边界 |
+| [BC migration and acceptance](billion-context-migration.md) | 当前 BC/Billion Memory 契约、旧库全量覆盖与验收边界 |
 
 ## Capability contracts / 能力文档
 
 | Capability | Current reference |
 | --- | --- |
-| Advisor | [Fork contract and limits](../packages/advisor/UPSTREAM.md); child README is retained upstream reference |
-| Memory | [Usage and current behavior](../packages/memory/README.md), [provenance](../packages/memory/UPSTREAM.md) |
+| Advisor (disabled) | [Historical fork contract](../packages/advisor/UPSTREAM.md); not certified for BC proxy re-enablement |
+| Billion Memory | [Usage and current behavior](../packages/bili-memory/README.md), [provenance](../packages/bili-memory/UPSTREAM.md) |
 | Remote SSH | [English](../packages/remote-ssh/README.md) / [中文](../packages/remote-ssh/README.zh-CN.md) |
 | Statusline | [Usage and data definitions](../packages/statusline/README.md), [provenance](../packages/statusline/UPSTREAM.md) |
 | GPT Fast | [Usage and allowlist](../packages/gpt-fast-mode/README.md), [provenance](../packages/gpt-fast-mode/UPSTREAM.md) |
@@ -27,7 +27,8 @@
 
 | Record | Status |
 | --- | --- |
+| [Legacy BCP compatibility](bcp-compatibility.md) | Historical BCP profile evidence, not the current BC contract |
 | [Memory audit](memory-audit.md) | Historical baseline findings; several defects were subsequently fixed |
 | [Memory design](memory-design.md) | Historical broader proposal; curated/global facts and automatic injection are not implemented |
 | [Memory roadmap](memory-roadmap.md) | Minimum-version delivery record; curated memory remains deferred |
-| [Upstream Memory validation](../packages/memory/VALIDATION.md) | Retained upstream evidence, not an attestation of every local fork feature |
+| [Upstream Memory validation](../packages/bili-memory/VALIDATION.md) | Retained upstream evidence, not an attestation of every local fork feature |

@@ -32,7 +32,8 @@ export function packageIdentity(source: string, agentDir: string): string {
   return `local:${path}`;
 }
 
-export const localPlugins = ["remote-ssh", "advisor", "memory", "statusline", "gpt-fast-mode"] as const;
+// Advisor source is retained, but disabled during the Billion Context migration.
+export const localPlugins = ["remote-ssh", "bili-memory", "statusline", "gpt-fast-mode"] as const;
 const resourceTypes = ["extensions", "themes", "skills", "prompts"] as const;
 
 // Pi patterns match package-relative paths, absolute paths and (for globs) basenames.
@@ -60,7 +61,7 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     root, resolve(root, "packages/remote-ssh"), resolve(root, "packages/pi"),
     legacyRoot, resolve(legacyRoot, "packages/pi"), resolve(legacyRoot, "packages/remote-ssh"),
   ].map(identity));
-  // Retire the old UI; Advisor and Memory remain maintained in-tree.
+  // Retire the old UI and suspend Advisor; setup must not silently re-enable it.
   const replacedIds = new Set([
     "git:https://github.com/beautifulrem/pi-sakura-cyberdeck.git", "npm:pi-sakura-cyberdeck",
     resolve(root, "packages/ui"), resolve(legacyRoot, "packages/ui"),
@@ -68,6 +69,7 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     resolve(root, "packages/advisor"), resolve(legacyRoot, "packages/advisor"),
     "git:https://github.com/tjp72/pi-billion-memory.git", "npm:pi-billion-memory", "npm:@fuyao/pi-memory",
     resolve(root, "packages/memory"), resolve(legacyRoot, "packages/memory"),
+    "npm:@fuyao/bili-memory", resolve(root, "packages/bili-memory"), resolve(legacyRoot, "packages/bili-memory"),
     "npm:@narumitw/pi-statusline", "npm:@fuyao/pi-statusline",
     resolve(root, "packages/statusline"), resolve(legacyRoot, "packages/statusline"),
     "npm:@tunnckocore/pi-gpt-fast-mode", "npm:@fuyao/pi-gpt-fast-mode",
@@ -77,27 +79,43 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
   const managedIds = new Set(sources.map(identity));
   // These Goal packages register the same commands/tools; never retain both.
   if (managedIds.has("npm:@narumitw/pi-goal")) replacedIds.add("npm:@schovest/pi-goal");
+  if (managedIds.has("npm:billion-context")) {
+    replacedIds.add("npm:billion-context-pi");
+    replacedIds.add("git:github.com/ranxianglei/billion-context-pi");
+  }
   const findOld = (source: string) => old.find((e) => identity(sourceOf(e)) === identity(source));
   const pin = (source: string): PackageEntry => {
     const previous = findOld(source) ?? (identity(source) === "npm:@narumitw/pi-goal"
       ? old.find(entry => identity(sourceOf(entry)) === "npm:@schovest/pi-goal") : undefined);
+    if (identity(source) === 'npm:billion-context') {
+      const legacy = old.filter(entry => ['npm:billion-context-pi', 'git:github.com/ranxianglei/billion-context-pi'].includes(identity(sourceOf(entry))));
+      // Filters target different files in the new package. Never silently widen a
+      // disabled or selectively enabled compressor; require an explicit decision.
+      if (!previous && legacy.some(entry => typeof entry === 'object' &&
+        (entry.autoload === false || resourceTypes.some(type => entry[type] !== undefined)))) {
+        throw new Error('Legacy BCP has explicit resource filters; choose Billion Context enablement before applying setup');
+      }
+    }
     // Preserve explicit resource filters on third-party packages.
     return typeof previous === "object" ? { ...previous, source } : source;
   };
+  const relocatePath = (pattern: string): string => pattern.replace(`${legacyRoot}/`, `${root}/`)
+    .replace(`${root}/packages/memory/`, `${root}/packages/bili-memory/`);
   const relocate = (entry: PackageEntry, source: string): PackageEntry => {
     if (typeof entry === "string") return source;
     const result: Exclude<PackageEntry, string> = { ...entry, source };
     for (const type of resourceTypes) {
       if (entry[type] === undefined) continue;
       if (!Array.isArray(entry[type]) || entry[type].some(p => typeof p !== "string")) throw new Error("Invalid resource filters");
-      result[type] = entry[type].map((p: string) => p.replace(`${legacyRoot}/`, `${root}/`));
+      result[type] = entry[type].map(relocatePath);
     }
     return result;
   };
   const previousRoot = findOld(root) ?? findOld(legacyRoot);
   const children = localPlugins.map((name): PackageEntry => {
     const source = resolve(root, "packages", name);
-    const previous = findOld(source) ?? findOld(resolve(legacyRoot, "packages", name));
+    const previous = findOld(source) ?? findOld(resolve(legacyRoot, "packages", name)) ??
+      (name === "bili-memory" ? findOld(resolve(root, "packages/memory")) ?? findOld(resolve(legacyRoot, "packages/memory")) : undefined);
     if (previous) return relocate(previous, source);
     if (typeof previousRoot !== "object") return source;
     const entry: PackageEntry = { source };
@@ -105,12 +123,12 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
     const previousBase = identity(previousRoot.source) === identity(legacyRoot) ? legacyRoot : root;
     for (const type of resourceTypes) {
       if (previousRoot[type] !== undefined) {
-        entry[type] = rebaseFilters(previousRoot[type], previousBase).map(pattern => pattern.replace(`${legacyRoot}/`, `${root}/`));
+        entry[type] = rebaseFilters(previousRoot[type], previousBase).map(relocatePath);
       }
     }
     return Object.keys(entry).length > 1 ? entry : source;
   });
-  // BCP must load before the remote bridge. Reserved root resources are not loaded.
+  // Billion Context must load before the remote bridge. Reserved root resources are not loaded.
   const packages: PackageEntry[] = [pin(sources[0]!), ...children, ...sources.slice(1).map(pin)];
   for (const entry of old) {
     const id = identity(sourceOf(entry));
@@ -140,7 +158,18 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
   return next;
 }
 
-type AcpSettings = Record<string, unknown>;
+type BiliSettings = Record<string, unknown>;
+
+export function billionConfigPath(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  return env.BILI_CONFIG_FILE
+    ? resolve(env.BILI_CONFIG_FILE)
+    : resolve(env.XDG_CONFIG_HOME || resolve(home, '.config'), 'billion-context/billion-context.json');
+}
+
+/** Ordinary upgrades are reviewed; critical-defect repairs remain enabled by user choice. */
+export function mergeBillionConfig(existing: BiliSettings): BiliSettings {
+  return { ...existing, autoUpdate: false, advisoryCheck: true };
+}
 
 async function readOptional(path: string): Promise<string | undefined> {
   try { return await readFile(path, "utf8"); } catch (error) {
@@ -153,13 +182,13 @@ export async function setup(
   agentDir: string,
   apply: boolean,
   root = repoRoot,
-  acpPath = resolve(homedir(), ".pi/acp.json"),
-): Promise<{ changed: boolean; backup?: string; acpBackup?: string }> {
+  biliPath = billionConfigPath(),
+): Promise<{ changed: boolean; backup?: string; biliBackup?: string }> {
   const target = resolve(agentDir, "settings.json");
   const defaults = JSON.parse(await readFile(resolve(root, "config/settings.json"), "utf8")) as Settings;
   const manifest = JSON.parse(await readFile(resolve(root, "config/plugins.json"), "utf8")) as { packages: string[] };
-  if (!Array.isArray(manifest.packages) || !manifest.packages[0]?.startsWith("npm:billion-context-pi@")) {
-    throw new Error("Profile must load pinned BCP first");
+  if (!Array.isArray(manifest.packages) || !manifest.packages[0]?.startsWith("npm:billion-context@")) {
+    throw new Error("Profile must load pinned Billion Context first");
   }
   const original = await readOptional(target);
   const existing = original === undefined ? {} : JSON.parse(original);
@@ -167,17 +196,20 @@ export async function setup(
   const next = mergeProfile(existing, defaults, manifest.packages, root, agentDir);
   const settingsChanged = JSON.stringify(existing) !== JSON.stringify(next);
 
-  const originalAcp = await readOptional(acpPath);
-  const existingAcp = originalAcp === undefined ? {} : JSON.parse(originalAcp) as AcpSettings;
-  if (!existingAcp || typeof existingAcp !== "object" || Array.isArray(existingAcp)) throw new Error("acp.json must be an object");
-  const nextAcp = { ...existingAcp, autoUpdate: false };
-  const acpChanged = JSON.stringify(existingAcp) !== JSON.stringify(nextAcp);
-  const changed = settingsChanged || acpChanged;
+  const originalBili = await readOptional(biliPath);
+  const existingBili = originalBili === undefined ? {} : JSON.parse(originalBili) as BiliSettings;
+  if (!existingBili || typeof existingBili !== "object" || Array.isArray(existingBili)) throw new Error("billion-context.json must be an object");
+  const nextBili = mergeBillionConfig(existingBili);
+  const biliChanged = JSON.stringify(existingBili) !== JSON.stringify(nextBili);
+  const changed = settingsChanged || biliChanged;
 
   console.log(`${apply ? "Apply" : "Preview"}: ${target}`);
-  console.log("Managed packages (unrelated packages/preferences preserved; retired UI removed; Advisor / Memory use in-repo forks):");
+  console.log("Managed packages (unrelated packages/preferences preserved; retired UI removed; Advisor disabled; Memory uses an in-repo fork):");
   for (const entry of next.packages ?? []) console.log(`  ${sourceOf(entry)}${typeof entry === "object" ? " (filtered)" : ""}`);
-  console.log(`BCP auto-update: disabled in ${acpPath}`);
+  console.log(`Billion Context: ordinary auto-update off; critical-defect auto-repair on (${biliPath}). Repairs may change the pinned runtime version.`);
+  if (process.env.ACP_AUTO_UPDATE !== undefined || process.env.BILI_ADVISORY_CHECK !== undefined) {
+    console.log('Warning: ACP_AUTO_UPDATE / BILI_ADVISORY_CHECK environment overrides take precedence over this file.');
+  }
   if (!apply || !changed) {
     console.log(changed ? "No files changed. Use --apply after reviewing the profile." : "Profile already configured.");
     return { changed };
@@ -185,27 +217,27 @@ export async function setup(
   // Only a built entry can be installed. No downloads or model calls are made here.
   await access(resolve(root, "packages/remote-ssh/dist/pi-extension.js"));
   await mkdir(agentDir, { recursive: true, mode: 0o700 });
-  await mkdir(resolve(acpPath, ".."), { recursive: true, mode: 0o700 });
+  await mkdir(resolve(biliPath, ".."), { recursive: true, mode: 0o700 });
   const backup = settingsChanged && original !== undefined ? `${target}.bak-fuyao-pi-${randomUUID()}` : undefined;
-  const acpBackup = acpChanged && originalAcp !== undefined ? `${acpPath}.bak-fuyao-pi-${randomUUID()}` : undefined;
+  const biliBackup = biliChanged && originalBili !== undefined ? `${biliPath}.bak-fuyao-pi-${randomUUID()}` : undefined;
   if (backup) await writeFile(backup, original!, { mode: 0o600, flag: "wx" });
-  if (acpBackup) await writeFile(acpBackup, originalAcp!, { mode: 0o600, flag: "wx" });
+  if (biliBackup) await writeFile(biliBackup, originalBili!, { mode: 0o600, flag: "wx" });
   if (settingsChanged) {
     const temporary = `${target}.tmp-${randomUUID()}`;
     await writeFile(temporary, JSON.stringify(next, null, 2) + "\n", { mode: 0o600, flag: "wx" });
     await rename(temporary, target);
     await chmod(target, 0o600);
   }
-  if (acpChanged) {
-    const temporary = `${acpPath}.tmp-${randomUUID()}`;
-    await writeFile(temporary, JSON.stringify(nextAcp, null, 2) + "\n", { mode: 0o600, flag: "wx" });
-    await rename(temporary, acpPath);
-    await chmod(acpPath, 0o600);
+  if (biliChanged) {
+    const temporary = `${biliPath}.tmp-${randomUUID()}`;
+    await writeFile(temporary, JSON.stringify(nextBili, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    await rename(temporary, biliPath);
+    await chmod(biliPath, 0o600);
   }
   console.log(backup ? `Backup: ${backup}` : settingsChanged ? "Created settings.json" : "Settings already configured");
-  console.log(acpBackup ? `ACP backup: ${acpBackup}` : acpChanged ? `Created ${acpPath}` : "ACP auto-update already disabled");
+  console.log(biliBackup ? `Billion Context backup: ${biliBackup}` : biliChanged ? `Created ${biliPath}` : "Billion Context update policy already configured");
   console.log("Settings configured; dependencies have NOT been downloaded. Run pi install <exact-source> for changed manifest entries (pinned npm sources are skipped by pi update --extensions), then restart Pi.");
-  return { changed, backup, acpBackup };
+  return { changed, backup, biliBackup };
 }
 
 if (import.meta.main) {

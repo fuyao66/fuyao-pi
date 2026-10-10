@@ -1,4 +1,6 @@
-# BCP compatibility
+# BCP compatibility (historical)
+
+> This record describes the retired BCP profile and its tests at that time. The current profile uses Billion Context (BC); see [migration and acceptance](billion-context-migration.md). References below to the current pin, setup or Goal tests are historical, not instructions for the active installation.
 
 ## Error-usage protection and Goal integration
 

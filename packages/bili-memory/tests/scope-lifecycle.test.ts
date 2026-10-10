@@ -4,7 +4,7 @@ import { mkdtempSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import factory,{configureForTests,getDb,loadSqlite} from '../src/extension.ts';
-import { projectScope } from '../src/project-scope.ts';
+import { projectScope, recordDirectoryHints } from '../src/project-scope.ts';
 
 test('factory attributes only post-start persisted evidence, guards transitions and scopes tools',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'memory-scope-life-'));const file=join(dir,'session');
@@ -29,6 +29,17 @@ test('factory attributes only post-start persisted evidence, guards transitions 
   const search=async(params:any)=>tools.get('memory_search').execute('s',params,undefined,undefined,ctx);
   const current=await search({query:'needle'});assert.equal(current.details.hits,1);
   assert.equal((await search({query:'needle',scope:'all'})).details.hits,2);
+  // Historical cwd is an explicit lower-confidence fallback, never an exact link.
+  db.db.prepare('UPDATE sources SET cwd=? WHERE source_file=?').run('/one/demo',file+'.acp.json');
+  recordDirectoryHints(db.db);
+  workspace={mode:'local',generation:2};
+  const fallback=await search({query:'needle'});
+  assert.equal(fallback.details.hits,1);
+  assert.match(fallback.content[0].text,/session-directory clue only/);
+  const detail=await tools.get('memory_expand').execute('e',{block:'old',mode:'summary'},undefined,undefined,ctx);
+  assert.equal(detail.details.mode,'summary');
+  assert.match(detail.content[0].text,/needle legacy/);
+  workspace={mode:'remote',target:'host',root:'/work/demo',generation:3};
   const pending=search({query:'needle'}); // scanSources awaits filesystem IO before resolving.
   workspace={mode:'unavailable',generation:2};
   const switched=await pending;assert.equal(switched.details.mode,'error');assert.match(switched.content[0].text,/workspace changed/);

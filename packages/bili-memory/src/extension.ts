@@ -1,18 +1,13 @@
 /**
- * pi-billion-memory — long-term memory extension for the pi coding agent
+ * bili-memory — long-term summary retrieval for Billion Context on Pi
  *
  * Data flow: read allow-listed ACP compression files (+ the pi session header for cwd metadata
  * only) → SQLite shared store → lexical / opt-in embedding RRF memory_search
  *
- * Supported source kinds:
- *   - pi:      billion-context-pi sidecars  <session>.jsonl.acp.json
- *              under ~/.pi/agent/sessions/** (default source "pi")
- *   - opencode: opencode-acp state files    ses_*.json (filename = <session.id>.json)
- *              under <home>/.local/share/opencode/storage/plugin/acp (default source "opencode")
- *   - bili:     billion-context proxy session files <host>_<hash>.json (WorkBuddy/codebuddy
- *              proxied sessions) under <home>/.local/share/billion-context/sessions/** (no default)
+ * Runtime sources: Billion Context v3 persisted sessions and Memory-owned immutable
+ * history archives. Legacy parsers are restricted to explicit offline conversion.
  *
- * The allow-list lives in ~/.pi/pi-billion-memory.sources.jsonl (one JSON object per line).
+ * The allow-list lives in ~/.pi/bili-memory/sources.jsonl (one JSON object per line).
  * Each line points at a root directory + file pattern and selects the adapter that knows how
  * to read that format. Scanning is always restricted to these allow-listed locations — there is
  * no global discovery across every session or message file. For a pi source the only raw-file
@@ -41,26 +36,30 @@
  *
  * Derived from pi-billion-memory 0.5.3; see ../UPSTREAM.md for attribution and fork contract.
  * Loaded from source through fuyao-pi's root manifest; requires Node >=22.19.
- * Embedding config: ~/.pi/fuyao-memory-embedding.json (disabled by default).
- * Config: ~/.pi/pi-billion-memory.json (optional; see loadConfig defaults below).
- * Allow-list: ~/.pi/pi-billion-memory.sources.jsonl (optional; defaults to pi + opencode).
- * Log: ~/.pi/pi-billion-memory.log.
+ * Embedding config: ~/.pi/bili-memory/embedding.json (disabled by default).
+ * Config: ~/.pi/bili-memory/config.json (optional; see loadConfig defaults below).
+ * Allow-list: ~/.pi/bili-memory/sources.jsonl (defaults to proxy sessions + history).
+ * Log: ~/.pi/bili-memory/memory.log.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
+import { expandBiliBlock } from './bili-expand.js';
 import { hash, loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory, ensureVectorSchema } from "./hybrid.js";
 import { realSourcePath, readSourceFile } from './source-files.js';
 import { summaryPage } from './summary-read.js';
 import { summarySnippet } from './snippets.js';
 import { SourceCache } from './source-cache.js';
+import { BiliCollector } from './bili-collector.js';
+import { memoryPaths, proxySessionsDir } from './paths.js';
+import { normalizeHistoryBlocks, historyRegistration, historyMatches } from './history-archive.js';
 import { AutoEmbed } from "./auto-embed.js";
 import { CompressionScan } from "./compression-scan.js";
 import { SourcePolicy, sourceKey, sqlAuthorization, type SourceDocument } from "./source-policy.js";
-import { ensureProjectSchema, recordMessageProjects, assignBlockProjects, readProjectScope, scopeAllowedIds } from "./project-scope.js";
+import { ensureProjectSchema, recordMessageProjects, recordBiliMessageProjects, assignBlockProjects, readProjectScope, scopeAllowedIds, scopeDirectoryHintIds, recordWorkspaceInterval } from "./project-scope.js";
 import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
 import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
 import { cleanBody, showMemoryBrowser, type BrowserRow } from "./memory-browser.js";
@@ -71,11 +70,15 @@ import { cleanBody, showMemoryBrowser, type BrowserRow } from "./memory-browser.
 
 const HOME = os.homedir();
 const PI_DIR = path.join(HOME, ".pi");
-const CFG_PATH = path.join(PI_DIR, "pi-billion-memory.json");
+const paths = memoryPaths();
+const CFG_PATH = paths.config;
+// Legacy readers are only used by offline conversion and historical regression fixtures.
+// The extension entry does not enable them.
+let legacyOffline = false;
 
 const DEFAULT_CFG = {
-  /** SQLite store location (default ~/.pi/pi-billion-memory.db) */
-  dbPath: path.join(PI_DIR, "pi-billion-memory.db"),
+  /** Memory-owned SQLite store, separate from upstream proxy state. */
+  dbPath: paths.database,
   /** Max summary chars stored per block; longer ones are truncated to keep the store small */
   maxSummaryChars: 20000,
   /** Debug logging */
@@ -85,9 +88,9 @@ const DEFAULT_CFG = {
   /** Background full allow-list scan on session start; disable for faster startups */
   scanOnStartup: true,
   /** JSONL allow-list of compression source roots (one JSON object per line) */
-  sourcesPath: path.join(PI_DIR, "pi-billion-memory.sources.jsonl"),
+  sourcesPath: paths.sources,
   /** Log file (overridable so tests never write to the real ~/.pi log) */
-  logPath: path.join(PI_DIR, "pi-billion-memory.log"),
+  logPath: paths.log,
   /**
    * Register `memory_expand`: bounded stored-summary pages or original session messages.
    * Off by default because list/full expose raw conversation text; summary mode does not
@@ -319,6 +322,10 @@ function expandHome(p) {
 }
 
 function defaultSources() {
+  if (!legacyOffline) return [
+    { id: 'billion-context', adapter: 'bili-session', root: proxySessionsDir(), pattern: '**/*.json', enabled: true },
+    { id: 'migrated-history', adapter: 'memory-history', root: paths.history, pattern: '*.json', enabled: true },
+  ];
   const piRoot = path.join(PI_DIR, "agent", "sessions");
   const ocRoot = path.join(HOME, ".local", "share", "opencode", "storage", "plugin", "acp");
   const ocDb = path.join(HOME, ".local", "share", "opencode", "opencode.db");
@@ -376,7 +383,7 @@ export function withoutPaths(text: string): string {
 }
 
 /** Adapter ids the scanner understands; anything else is rejected where the allow-list is read. */
-const SOURCE_ADAPTERS = new Set(["pi-sidecar", "opencode-acp", "bili-session"]);
+const SOURCE_ADAPTERS = new Set(["pi-sidecar", "opencode-acp", "bili-session", "memory-history"]);
 
 /** @internal Test seam: the same validation the allow-list loader applies. */
 export function sanitizeSource(raw) {
@@ -388,7 +395,7 @@ export function sanitizeSource(raw) {
   if (!id || !adapter || !root || !pattern) return null;
   // An unknown adapter used to fall through to the permissive branch at scan time; reject it here
   // so a typo in the allow-list is visible instead of a silently dead source.
-  if (!SOURCE_ADAPTERS.has(adapter)) return null;
+  if (!SOURCE_ADAPTERS.has(adapter) || (!legacyOffline && !['bili-session', 'memory-history'].includes(adapter))) return null;
   const out: any = {
     id,
     adapter,
@@ -672,14 +679,16 @@ function biliHost(sourceFile) {
 /**
  * bili (billion-context proxy, e.g. WorkBuddy/codebuddy) sessions: the file is
  * `{ version, savedAt, id, payload }` and the compression blocks live under
- * `payload.state.blocks`. Blocks record `startRef`/`endRef`, but the raw message ids (`h_...`) are
- * kept separately from the blocks and the session is one JSON document rather than line-delimited
- * messages — so bili blocks are stored as not expandable (msgIds = null), like opencode state files.
+ * `payload.state.blocks`. Version 3 blocks also carry effectiveMessageIds (h_... identities).
+ * Preserve them as project-attribution evidence; they are NOT Pi JSONL ids and must never
+ * be passed to the Pi raw-log reader. Summary reading is independent of raw expansion.
  */
 function normalizeBiliBlocks(data: any) {
-  const blocks = (data as any)?.payload?.state?.blocks;
-  // null = unrecognized payload shape: the caller must not advance the watermark (retry later)
-  if (!Array.isArray(blocks)) return null;
+  const blocks = data?.payload?.state?.blocks;
+  // Fail closed on a new persistence version instead of silently indexing a changed contract.
+  if (data?.version !== 3 || (data.payload?.version !== undefined && data.payload.version !== 3) ||
+      typeof data.id !== 'string' || !data.id ||
+      (data.payload?.id !== undefined && data.payload.id !== data.id) || !Array.isArray(blocks)) return null;
   const out: any[] = [];
   for (const b of blocks) {
     if (!b || (typeof b.blockId !== "string" && typeof b.blockId !== "number") || typeof b.summary !== "string")
@@ -690,7 +699,7 @@ function normalizeBiliBlocks(data: any) {
       tier: toInt(b.tier),
       topic: typeof b.topic === "string" && b.topic ? b.topic.slice(0, MAX_TOPIC_CHARS) : null,
       summary: b.summary,
-      msgIds: null,
+      msgIds: collectMsgIds(b),
       refStart: typeof b.startRef === "string" ? b.startRef : null,
       refEnd: typeof b.endRef === "string" ? b.endRef : null,
       compressedTokens: toInt(b.compressedTokens),
@@ -898,7 +907,7 @@ export class MemoryDb {
    * @param {boolean} force ignore the mtime/size watermark and rescan
    * @param {((sessionFile:string)=>Promise<string|null>)|null} resolveCwd lazy cwd resolver
    */
-  async ingestSourceFile(sourceFile, meta: any = {}, force = false, resolveCwd = null) {
+  async ingestSourceFile(sourceFile, meta: any = {}, force = false, resolveCwd = null, current: () => boolean = () => true) {
     const onStored = this.onStored;
     this.open();
     try {
@@ -915,7 +924,10 @@ export class MemoryDb {
     }
     const mtimeMs = st.mtimeMs;
     const size = st.size;
-    const kind = meta?.kind === "opencode" ? "opencode" : meta?.kind === "bili" ? "bili" : "pi";
+    const kind = meta?.kind === 'history' ? 'history' : meta?.kind === "opencode" ? "opencode" : meta?.kind === "bili" ? "bili" : "pi";
+    if (!legacyOffline && kind !== 'bili' && kind !== 'history') {
+      return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs: 0, size: 0, error: 'Legacy sources require offline migration' };
+    }
     let cwd = typeof meta?.cwd === "string" && meta.cwd ? meta.cwd : null;
     let project = typeof meta?.project === "string" && meta.project ? meta.project : null;
     if (!force) {
@@ -954,13 +966,20 @@ export class MemoryDb {
     try {
       const read = await readSourceFile(sourceFile);
       if (read.stat.mtimeMs !== mtimeMs || read.stat.size !== size) throw new Error('Source changed during ingestion');
+      if (kind === 'history' && !historyMatches(read.body, historyRegistration(this.db, sourceFile)))
+        throw new Error('Unregistered or modified history archive');
       data = JSON.parse(read.body);
     } catch (e) {
       // Possibly mid-write by another process: leave watermark untouched, retry next scan
       return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs, size, error: `parse: ${e.message}` };
     }
+    // The archive owns immutable historical labels, not the current workspace.
+    if (kind === 'history' && normalizeHistoryBlocks(data)) {
+      cwd = data.origin.cwd;
+      project = data.origin.project;
+    }
     const blocks =
-      kind === "pi"
+      kind === 'history' ? normalizeHistoryBlocks(data) : kind === "pi"
         ? normalizePiBlocks(data)
         : kind === "bili"
           ? normalizeBiliBlocks(data)
@@ -977,7 +996,7 @@ export class MemoryDb {
         error: "unrecognized source format",
       };
     }
-    if (this.closed) {
+    if (this.closed || !current()) {
       // The session ended while this file was being read: the connection is gone, and a closed
       // store must not be reopened behind the user's back. Report a plain failure instead of a
       // TypeError from a null handle (plus a second one from the ROLLBACK).
@@ -1027,11 +1046,13 @@ export class MemoryDb {
         AND NOT EXISTS (SELECT 1 FROM block_tombstones WHERE source_file=? AND block_id=?)`);
       for (const b of blocks) {
         if (!b || typeof b.summary !== "string") continue;
-        const redactedSummary = redactSecrets(b.summary);
-        const redactedTopic = typeof b.topic === "string" && b.topic ? redactSecrets(b.topic) : { text: null, hits: 0 };
+        // Registered archives contain previously sanitized, hash-verified data.
+        // Display/embedding limits must not truncate the stored historical revision.
+        const redactedSummary = kind === 'history' ? { text: b.summary, hits: 0 } : redactSecrets(b.summary);
+        const redactedTopic = kind === 'history' ? { text: b.topic, hits: 0 } : typeof b.topic === "string" && b.topic ? redactSecrets(b.topic) : { text: null, hits: 0 };
         redactedHits += redactedSummary.hits + redactedTopic.hits;
         const summary =
-          redactedSummary.text.length > cfg.maxSummaryChars
+          kind !== 'history' && redactedSummary.text.length > cfg.maxSummaryChars
             ? redactedSummary.text.slice(0, cfg.maxSummaryChars)
             : redactedSummary.text;
         if (!summary.trim()) continue;
@@ -1569,6 +1590,8 @@ async function scanOneSource(source, d, force, resolvePiCwd, generation, tally) 
     } else if (source.adapter === "opencode-acp") {
       const info = opencodeMap?.get(file);
       meta = { kind: "opencode", cwd: info?.cwd ?? null, project: info?.project ?? null };
+    } else if (source.adapter === 'memory-history') {
+      meta = { kind: 'history', cwd: null, project: null };
     } else if (source.adapter === "bili-session") {
       // bili sessions carry no working directory; project is derived from the file's host segment.
       meta = { kind: "bili", cwd: null, project: null };
@@ -1607,7 +1630,7 @@ export async function buildSourcePolicy(): Promise<SourcePolicy> {
   const unavailable = new Set<string>();
   for (const source of await loadSources()) {
     if (!source.enabled) continue;
-    const kind = { "pi-sidecar": "pi", "opencode-acp": "opencode", "bili-session": "bili" }[source.adapter];
+    const kind = { "pi-sidecar": "pi", "opencode-acp": "opencode", "bili-session": "bili", "memory-history": "history" }[source.adapter];
     if (!kind) continue;
     const excluded = (file: string) => source.adapter === "pi-sidecar" &&
       path.relative(source.root, file).split(path.sep).some(part => cfg.excludeDirs.includes(part));
@@ -1622,17 +1645,20 @@ export async function buildSourcePolicy(): Promise<SourcePolicy> {
     for (const file of listing.files) {
       if (excluded(file)) continue;
       const key = sourceKey(file, kind);
+      const registration = kind === 'history' ? historyRegistration(store.db, file) : undefined;
+      if (kind === 'history' && registration?.enabled !== 1) { unavailable.delete(key); continue; }
       if (documents.has(key)) continue;
       try {
-        documents.set(key, await policyDocuments.read(key + ':' + cfg.maxSummaryChars, file, data => {
-          const parsed = kind === 'pi' ? normalizePiBlocks(data) : kind === 'opencode' ? normalizeOpencodeBlocks(data) : normalizeBiliBlocks(data);
+        documents.set(key, await policyDocuments.read(key + ':' + cfg.maxSummaryChars + ':' + (registration?.sha256 ?? ''), file, (data, body) => {
+          if (kind === 'history' && !historyMatches(body, registration)) return { state: 'missing/unreadable' };
+          const parsed = kind === 'history' ? normalizeHistoryBlocks(data) : kind === 'pi' ? normalizePiBlocks(data) : kind === 'opencode' ? normalizeOpencodeBlocks(data) : normalizeBiliBlocks(data);
           if (!parsed) return { state: 'missing/unreadable' };
           const blocks = new Map();
           for (const b of parsed) {
-            const summary = redactSecrets(b.summary).text.slice(0, cfg.maxSummaryChars);
+            const summary = kind === 'history' ? b.summary : redactSecrets(b.summary).text.slice(0, cfg.maxSummaryChars);
             if (!summary.trim()) continue;
             blocks.set(b.blockId, { blockId: b.blockId, summary,
-              topic: b.topic ? redactSecrets(b.topic).text : null,
+              topic: kind === 'history' ? b.topic : b.topic ? redactSecrets(b.topic).text : null,
               msgIds: b.msgIds?.length ? JSON.stringify(b.msgIds) : null,
               refStart: b.refStart, refEnd: b.refEnd });
           }
@@ -1671,7 +1697,7 @@ function fmtTokens(n) {
 }
 
 function sourceLabel(row) {
-  const kind = row.kind === "opencode" || row.kind === "bili" ? row.kind : "pi";
+  const kind = ['opencode', 'bili', 'history'].includes(row.kind) ? row.kind : 'pi';
   let base = path.basename(row.sourceFile || "");
   if (kind === "pi" && base.endsWith(".acp.json")) base = base.slice(0, -".acp.json".length);
   return `[${kind}] ${base}`;
@@ -1687,7 +1713,7 @@ export function formatResults(res, query = '') {
       diagnostic + "No memory matches. Try: 1) shorter / more common keywords; 2) drop the project filter; " +
       "3) if a compression happened moments ago, retry later (ingestion follows scan timing). " +
       "The store only contains ACP block summaries from allow-listed sources " +
-      "(pi billion-context-pi sidecars, opencode-acp state files, and billion-context sessions)."
+      "(Billion Context sessions and migrated history archives)."
     );
   }
   const modeLabel =
@@ -1709,7 +1735,7 @@ export function formatResults(res, query = '') {
       `[${i + 1}] project ${project} · ${tm || "time unknown"} · ${r.blockId || ""}` +
       ` · tier${r.tier ?? "?"} · ${fmtTokens(r.tokens) || "?"} tokens compressed${refs}\n` +
       `Source: ${sourceLabel(r)}\n` +
-      `${topic}${summary}`
+      `${r.scopeBasis === 'session-directory' ? 'Attribution: session-directory clue only (keyword fallback); actual workspace may differ.\n' : r.crossWorkspace ? 'Attribution: cross-workspace summary; contains history from multiple projects.\n' : r.partialProject ? 'Attribution: this project is evidenced for part of the summary; remaining messages are unassigned.\n' : ''}${topic}${summary}`
     );
   });
   return head + parts.join("\n\n---\n\n");
@@ -1820,18 +1846,18 @@ const MEMORY_EXPAND_PARAMETERS = {
       type: "string",
       enum: ["list", "full", "summary"],
       description:
-        "'list' (default) lists original messages; 'full' reads explicit message indices; 'summary' reads the stored summary without opening raw session logs",
+        "'list' (default) describes retained proxy text chunks; 'full' reads selected chunks with the list revision; 'summary' reads the stored summary, including migrated history",
     },
     select: {
       type: "array",
       items: { type: "number" },
       description:
-        "1-based message indices taken from a 'list' result; required (and non-empty) for mode 'full', which never renders a whole block at once",
+        "1-based text chunk indices from a 'list' result; required and non-empty for mode 'full'; also supply that list's revision",
     },
-    limit: { type: "number", description: "Max messages to render, default from expandMaxMessages" },
+    limit: { type: "number", description: "Max text chunks to render, default from expandMaxMessages" },
     chars: { type: "number", description: "Max content characters (UTF-16 units), capped by expandMaxChars; summary defaults to at most 6000" },
     offset: { type: "integer", minimum: 0, description: "Summary-only offset; start at 0, then use nextOffset" },
-    revision: { type: "string", description: "Summary-only revision from the first page; required for continuation" },
+    revision: { type: "string", description: "Revision from summary page or proxy text manifest; required for summary continuation and proxy full reads" },
   },
   required: ["block"],
 } as const;
@@ -1900,13 +1926,22 @@ export default async function factory(pi: ExtensionAPI) {
     if (file && ids.length) { const store = getDb(); store.open(); recordMessageProjects(store.db, file + '.acp.json', ids, project); }
   };
   let observedScope: ReturnType<typeof readProjectScope> | undefined;
+  let biliCollector: BiliCollector | null = null;
+  const scanSession = async (ctx: any, force = false) => {
+    if (biliCollector) return biliCollector.scan();
+    if (legacyOffline) return scanCurrentSession(ctx.sessionManager?.getSessionFile?.() ?? null, force, ctx.cwd);
+    return null;
+  };
   const observeMessages = (ctx: any) => {
     const scope = readProjectScope(pi, ctx.cwd);
-    captureMessages(ctx, observedScope?.stamp === scope.stamp ? scope.id : null);
+    biliCollector?.observeScope(scope);
+    if (legacyOffline && !biliCollector) captureMessages(ctx, observedScope?.stamp === scope.stamp ? scope.id : null);
+    const conversation = ctx.sessionManager?.getSessionId?.() ?? ctx.sessionManager?.getSessionFile?.();
+    if (conversation) { const store = getDb(); store.open(); recordWorkspaceInterval(store.db, conversation, scope); }
     observedScope = scope;
   };
   let compressionScan: CompressionScan | null = null;
-  const stopEmbedding = () => { compressionScan?.stop(); compressionScan = null; auto?.stop(); auto = null; hybrid?.abort(); hybrid = null; };
+  const stopEmbedding = () => { biliCollector?.stop(); biliCollector = null; compressionScan?.stop(); compressionScan = null; auto?.stop(); auto = null; hybrid?.abort(); hybrid = null; };
   const getHybrid = () => {
     if (!hybrid) {
       const store = getDb();
@@ -1958,15 +1993,40 @@ export default async function factory(pi: ExtensionAPI) {
         (text) => withoutPaths(redactSecrets(text).text), 750, automatic);
     }
     const store = getDb(); store.open();
+    const conversation = ctx.sessionManager?.getSessionId?.() ?? sessionFile;
+    if (conversation) recordWorkspaceInterval(store.db, conversation, observedScope, Date.now(), true);
     store.onStored = (records, count) => {
       if (generation !== sessionGeneration || dbClosed) return;
       for (const record of records) feed.add({ ...record, topic: withoutPaths(redactSecrets(record.topic ?? "").text), summary: withoutPaths(redactSecrets(record.summary ?? "").text), type: "summary" });
       cards?.saved("summary", records, count);
     };
+    // Native collection requires a persistent Pi conversation identity. Missing
+    // identity is not permission to fall back to another session or legacy source.
+    const conversationId = ctx.sessionManager?.getSessionId?.();
+    if (conversationId) biliCollector = new BiliCollector({
+      conversationId, origin: () => process.env.BILLION_CONTEXT_PROXY,
+      scope: () => readProjectScope(pi, ctx.cwd), current: () => generation === sessionGeneration && !dbClosed,
+      files: async () => {
+        const files: string[] = [];
+        for (const source of await loadSources()) if (source.enabled && source.adapter === 'bili-session') {
+          files.push(...(await listSourceFiles(source)).files);
+        }
+        return [...new Set(files)];
+      },
+      ingest: async file => {
+        const valid = () => generation === sessionGeneration && !dbClosed;
+        if (!valid()) return false;
+        return (await store.ingestSourceFile(file, { kind: 'bili' }, false, null, valid)).ok;
+      },
+      saveEvidence: (file, rows) => {
+        if (generation !== sessionGeneration || dbClosed) return;
+        recordBiliMessageProjects(store.db, file, rows);
+      },
+    });
     compressionScan = new CompressionScan(async () => {
-      const result = await scanCurrentSession(sessionFile, true, ctx.cwd);
+      await scanSession(ctx, true);
       if (generation !== sessionGeneration || dbClosed) return;
-      if (result?.inserted || result?.refreshed) triggerAuto(generation);
+      triggerAuto(generation);
     }, () => generation === sessionGeneration && !dbClosed,
     () => logLine("compress-triggered memory scan failed; later scans will retry"));
     logLine(
@@ -1979,7 +2039,7 @@ export default async function factory(pi: ExtensionAPI) {
     if (!cfg.scanOnStartup) {
       // Startup full scan disabled: force-scan only the current session so it is visible immediately;
       // agent_settled and the pre-search scan keep everything else fresh.
-      scanCurrentSession(sessionFile, true, ctx.cwd).then(() => triggerAuto(generation)).catch((e) =>
+      scanSession(ctx, true).then(() => triggerAuto(generation)).catch((e) =>
         logLine(`session_start scan error: ${withoutPaths(e.message)}`),
       );
       return;
@@ -1994,7 +2054,7 @@ export default async function factory(pi: ExtensionAPI) {
           `initial scan: sources=${r.sources} files=${r.files} sidecarScanned=${r.scanned} newBlocks=${r.inserted} redacted=${r.redacted} ` +
             `totalBlocks=${r.total} failed=${r.failed}`,
         );
-        await scanCurrentSession(sessionFile, true, ctx.cwd); // force-scan the current session so it is visible right away
+        await scanSession(ctx, true); // correlate current proxy evidence after source scan
         if (generation !== sessionGeneration) return;
         const st = getDb().stats();
         logLine(`db ready: ${path.basename(st.dbPath)} sources=${st.sources} blocks=${st.blocks}`);
@@ -2007,7 +2067,7 @@ export default async function factory(pi: ExtensionAPI) {
     });
   });
 
-  pi.on("message_end", (_event, ctx) => { observeMessages(ctx); });
+  pi.on("message_end", (_event, ctx) => { observeMessages(ctx); if (biliCollector) compressionScan?.trigger(); });
   pi.on("tool_execution_end", (event, ctx) => {
     observeMessages(ctx);
     if (event.toolName === "compress" && !event.isError) compressionScan?.trigger();
@@ -2018,7 +2078,7 @@ export default async function factory(pi: ExtensionAPI) {
     const generation = sessionGeneration;
     try {
       const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
-      await scanCurrentSession(sessionFile, false, ctx.cwd);
+      await scanSession(ctx);
       triggerAuto(generation);
     } catch (e) {
       log(`agent_settled: ${e.message}`);
@@ -2050,7 +2110,7 @@ export default async function factory(pi: ExtensionAPI) {
     if (shutdownGeneration !== sessionGeneration) return;
     try {
       const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
-      await scanCurrentSession(sessionFile, false, ctx.cwd);
+      if (legacyOffline && !ctx.sessionManager?.getSessionId?.()) await scanCurrentSession(sessionFile, false, ctx.cwd);
     } catch (e) {
       log(`session_shutdown: ${e.message}`);
     }
@@ -2073,7 +2133,7 @@ export default async function factory(pi: ExtensionAPI) {
     label: "Memory Search",
     description:
       "Search pi's long-term memory store: block summaries produced by ACP compression from " +
-      "allow-listed sources (pi billion-context-pi sidecars, opencode-acp state files, and billion-context sessions) across all " +
+      "allow-listed sources (Billion Context sessions and migrated history archives) across all " +
       "allowed projects. Use when the user asks about past work, conclusions, decisions, technical " +
       "pitfalls, code locations, project context, or content compressed earlier in this session. " +
       "Query with Chinese or English keywords / phrases; results are relevance-ranked and annotated " +
@@ -2093,6 +2153,7 @@ export default async function factory(pi: ExtensionAPI) {
       const scope = readProjectScope(pi, _ctx.cwd);
       try {
         // Light allow-list scan (mtime watermark) before every search so latest compressions are included
+        if (biliCollector) await scanSession(_ctx);
         await scanSources();
         const { query, project, limit } = readMemorySearchParams(params);
         if (generation !== sessionGeneration || dbClosed) throw new Error("Memory search session expired");
@@ -2115,7 +2176,30 @@ export default async function factory(pi: ExtensionAPI) {
           : getDb().search(query, { project, limit, allowedIds, authorizedRows });
         if (generation !== sessionGeneration || dbClosed) throw new Error("Memory search session expired");
         if (readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp) throw new Error('Memory workspace changed during search');
-        const text = formatResults(res, query) + (!all && res.rows.length === 0 ? '\nCurrent-workspace scope excludes legacy, mixed or unknown project history. For an explicit wider lookup use scope: "all".' : '');
+        // Exact associations rank first; directory clues use keyword-only fallback.
+        if (!all && res.mode !== 'cancelled') {
+          const max = Math.max(1, Math.min(MAX_RESULT_LIMIT, limit));
+          if (res.rows.length < max) {
+            const policy = await buildSourcePolicy();
+            if (_signal?.aborted) return { content: [{ type: 'text', text: 'Memory search cancelled.' }], details: { mode: 'cancelled', hits: 0 } };
+            if (generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp)
+              throw new Error('Memory workspace changed during search');
+            const store = getDb();
+            const exactIds = new Set(scopeAllowedIds(store.db, policy.allowedIds, scope, false));
+            res.rows = res.rows.filter(row => exactIds.has(row.id) && policy.authorizedRows.some(current =>
+              current.id === row.id && current.sourceFile === row.sourceFile && current.blockId === row.blockId && current.summary === row.summary));
+            const hints = scopeDirectoryHintIds(store.db, policy.allowedIds, scope).filter(id => !exactIds.has(id));
+            const extra = store.search(query, { project, limit: max - res.rows.length,
+              allowedIds: hints, authorizedRows: policy.authorizedRows });
+            res.rows.push(...extra.rows.map(row => ({ ...row, scopeBasis: 'session-directory' })));
+          }
+          for (const row of res.rows) if (row.scopeBasis !== 'session-directory') {
+            row.crossWorkspace = getDb().db.prepare("SELECT count(*) n FROM memory_block_project_links WHERE block_id=? AND basis='messages'").get(row.id).n > 1;
+            row.partialProject = getDb().db.prepare('SELECT state FROM memory_block_projects WHERE block_id=?').get(row.id)?.state === 'unknown';
+          }
+        }
+        if (_signal?.aborted || res.mode === 'cancelled') return { content: [{ type: 'text', text: 'Memory search cancelled.' }], details: { mode: 'cancelled', hits: 0 } };
+        const text = formatResults(res, query) + (!all && res.rows.length === 0 ? '\nNo matches for current-workspace associations or session-directory clues. For an explicit wider lookup use scope: "all".' : '');
         return {
           content: [{ type: "text", text }],
           details: { mode: res.mode, hits: res.rows.length, dbPath: path.basename(cfg.dbPath), ...("coverage" in res ? { coverage: res.coverage } : {}) },
@@ -2142,17 +2226,17 @@ export default async function factory(pi: ExtensionAPI) {
       description:
         "Read a stored compression summary (mode 'summary') or recover its original session messages. " +
         "Only registered when expandEnabled is true in " +
-        "~/.pi/pi-billion-memory.json. Default mode 'list' returns just a manifest (ref, role, size); " +
-        "call again with mode 'full' and an explicit 'select' to read original text. Mode 'summary' " +
+        "~/.pi/bili-memory/config.json. Default mode 'list' returns a retained-text chunk manifest and revision; " +
+        "call again with mode 'full', explicit 'select' and that revision to read original text. Migrated history supports summary reading, not raw-log recovery. Mode 'summary' " +
         "returns bounded stored-summary pages; continuations require nextOffset and revision. Raw expansion is " +
         "two-step and bounded, because it spends the context that compression saved. Returned text " +
         "passes through the same secret redaction as ingestion, and nothing is written to the store.",
       promptSnippet: "Read a memory summary or recover original messages (opt-in; list before full)",
       promptGuidelines: [
         "Use mode 'summary' after search when the preview is insufficient; pass the result's block and source, preserve its scope, and continue with nextOffset and revision only as needed. If the summary changed, restart at offset 0 without the old revision.",
-        "For raw messages, use mode 'list' first: it shows which messages a block absorbed, with role and size.",
+        "For retained proxy originals, use mode 'list' first: it describes numbered text chunks, not individual messages; preserve its revision for mode 'full'.",
         "Request mode 'full' with a narrow 'select' only when the exact original wording matters.",
-        "memory_expand reads raw conversation lines from the session file; it only resolves references already recorded in a stored block.",
+        "Original-text reading is limited to the selected proxy block's retained text. It does not recursively expand nested blocks or follow placeholders. Migrated historical archives provide stored summaries only.",
       ],
       parameters: MEMORY_EXPAND_PARAMETERS,
       async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -2168,12 +2252,14 @@ export default async function factory(pi: ExtensionAPI) {
           const generation = sessionGeneration;
           const scope = readProjectScope(pi, _ctx.cwd);
           const all = (params as any).scope === 'all';
+          if (biliCollector) await scanSession(_ctx);
           await scanSources();
           const policy = await buildSourcePolicy();
           if (generation !== sessionGeneration || dbClosed) throw new Error('Memory expansion session expired');
           const db = getDb();
           if (readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp) throw new Error('Memory workspace changed during expansion');
-          const ids = scopeAllowedIds(db.db, policy.allowedIds, scope, all);
+          const ids = [...new Set([...scopeAllowedIds(db.db, policy.allowedIds, scope, all),
+            ...(!all ? scopeDirectoryHintIds(db.db, policy.allowedIds, scope) : [])])];
           const rows = db.findBlocks(p.block, p.source, 50, ids, policy.authorizedRows);
           const total = rows.length;
           if (rows.length === 0) {
@@ -2215,7 +2301,7 @@ export default async function factory(pi: ExtensionAPI) {
             const finalPolicy = await buildSourcePolicy();
             if (_signal?.aborted) throw new Error('Memory expansion cancelled');
             if (generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp ||
-                !scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all).includes(row.id) || !finalPolicy.allows(row))
+                ![...scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all), ...(!all ? scopeDirectoryHintIds(db.db, finalPolicy.allowedIds, scope) : [])].includes(row.id) || !finalPolicy.allows(row))
               throw new Error('Memory summary source or workspace changed or is no longer allowed');
             // Verify the database still holds this authorized revision after the async refresh.
             const latest = db.findBlocks(p.block, p.source, 50, [row.id], finalPolicy.authorizedRows)[0];
@@ -2230,14 +2316,26 @@ export default async function factory(pi: ExtensionAPI) {
                 totalChars: page.totalChars, returnedChars: page.returnedChars },
             };
           }
-          if (!String(row.sourceFile).endsWith(".acp.json")) {
+          if (row.kind === 'bili') {
+            const result = await expandBiliBlock({ file: row.sourceFile, blockId: row.blockId, summary: row.summary,
+              mode: p.mode, select: p.select, revision: p.revision, signal: _signal,
+              maxReadBytes: cfg.expandMaxReadBytes, maxChars: Math.min(cfg.expandMaxChars, p.chars ?? cfg.expandMaxChars),
+              maxMessages: Math.min(cfg.expandMaxMessages, p.limit ?? cfg.expandMaxMessages), redact: redactSecrets,
+              normalizeSummary: text => redactSecrets(text).text.slice(0, cfg.maxSummaryChars) });
+            const finalPolicy = await buildSourcePolicy();
+            if (_signal?.aborted || generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp ||
+                ![...scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all), ...(!all ? scopeDirectoryHintIds(db.db, finalPolicy.allowedIds, scope) : [])].includes(row.id) || !finalPolicy.allows(row))
+              throw new Error('Memory source or workspace changed during expansion');
+            return { content: [{ type: 'text', text: result.text }], details: { mode: p.mode, block: row.blockId, hits: 1, ...result } };
+          }
+          if (!legacyOffline || row.kind !== 'pi' || !String(row.sourceFile).endsWith(".acp.json")) {
             return {
               content: [
                 {
                   type: "text",
                   text:
-                    `memory_expand: block ${row.blockId} comes from ${sourceLabel(row)}, not a pi ACP sidecar. ` +
-                    "Expansion is currently supported only for pi sidecars.",
+                    `memory_expand: block ${row.blockId} has no supported retained original text. ` +
+                    "Use mode=summary to read the preserved summary. Historical archives retain summaries and provenance, not copied raw conversations.",
                 },
               ],
               details: { mode: "unsupported", hits: 1 },
@@ -2270,7 +2368,7 @@ export default async function factory(pi: ExtensionAPI) {
           });
           const finalPolicy = await buildSourcePolicy();
           if (generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp ||
-              !scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all).includes(row.id) || !finalPolicy.allows(row))
+              ![...scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all), ...(!all ? scopeDirectoryHintIds(db.db, finalPolicy.allowedIds, scope) : [])].includes(row.id) || !finalPolicy.allows(row))
             throw new Error('Memory expansion source or workspace changed or is no longer allowed');
           log(
             `expand ${row.blockId} mode=${p.mode} refs=${msgIds.length} found=${res.entries.filter((e) => e.found).length} returned=${res.returnedChars}`,
@@ -2341,7 +2439,7 @@ export default async function factory(pi: ExtensionAPI) {
             return;
           }
           if (!embeddingConfig.enabled) {
-            ctx.ui?.notify?.("Embedding disabled; configure the local fuyao-memory-embedding.json and restart.", "info");
+            ctx.ui?.notify?.("Embedding disabled; configure ~/.pi/bili-memory/embedding.json and restart.", "info");
             return;
           }
           const generation = sessionGeneration;
@@ -2448,6 +2546,8 @@ export default async function factory(pi: ExtensionAPI) {
 
 /** @internal */
 export function configureForTests(over: Record<string, unknown>): void {
+  // Explicit process-local fixture/conversion switch; never read from user configuration.
+  legacyOffline = over.legacyOffline !== false;
   policyDocuments.clear();
   cfg = { ...cfg, ...sanitizeCfg(over) };
   syncLogPath();

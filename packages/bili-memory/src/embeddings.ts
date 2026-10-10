@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import { createHash } from "node:crypto";
+import { memoryPaths } from './paths.js';
 
 export interface EmbeddingConfig {
   enabled: boolean; autoBackfill: boolean; baseUrl: string; model: string; dimensions: number;
@@ -39,7 +40,7 @@ export function sanitizeEmbeddingConfig(raw: any): EmbeddingConfig {
 export function loadEmbeddingConfig(): EmbeddingConfig {
   // Tests and offline runs must never inherit enabled user configuration.
   if (process.env.FUYAO_MEMORY_EMBEDDING_DISABLED === "1") return { ...defaults };
-  try { return sanitizeEmbeddingConfig(JSON.parse(readFileSync(join(homedir(), ".pi", "fuyao-memory-embedding.json"), "utf8"))); }
+  try { return sanitizeEmbeddingConfig(JSON.parse(readFileSync(memoryPaths().embeddings, "utf8"))); }
   catch { return { ...defaults }; }
 }
 export const hash = (text: string) => createHash("sha256").update(text).digest("hex");

@@ -1,5 +1,7 @@
 # Memory roadmap
 
+> Historical minimum-version delivery record for the retired BCP profile, not an active task list. Current BC adaptation and complete legacy-memory acceptance are recorded in [migration and acceptance](billion-context-migration.md) and the [Billion Memory contract](../packages/bili-memory/README.md).
+
 ## Goal
 Deliver a small BCP-compatible project and long-term memory plugin: correctly synchronized summaries, reliable project scope, unified source policy, and on-demand retrieval with tests and migration notes. This file tracks work; it does not activate the Goal extension or promise unattended execution after Pi exits.
 

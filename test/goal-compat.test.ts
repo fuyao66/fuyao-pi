@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { DefaultResourceLoader, SettingsManager, SessionManager, createAgentSession, buildSessionContext } from "@earendil-works/pi-coding-agent";
@@ -7,13 +7,14 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 const profile = process.env.FUYAO_TEST_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi/agent");
 const goalPath = process.env.FUYAO_TEST_GOAL_DIR ?? join(profile, "npm/node_modules/@narumitw/pi-goal");
-const bcpPackage = join(profile, "npm/node_modules/billion-context-pi");
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 const reply = (text: string): AssistantMessage => ({ role: "assistant", content: [{ type: "text", text }], api: "openai-completions", provider: "test", model: "test", timestamp: Date.now(), stopReason: "stop", usage });
 
 // Mirrors Schovest 0.2.0's canonical state; no production sessions or models.
-for (const goalFirst of [false, true]) {
-  test(`community Goal ${goalFirst ? "before" : "after"} BCP restores state and survives real compression`, async () => {
+// Wire compression is covered by scripts/verify-billion-context.mjs. This test
+// owns Goal persistence/cancellation and does not load a second legacy compressor.
+for (const goalFirst of [false]) {
+  test('community Goal restores state, completes and pauses without the legacy compressor', async () => {
     const dir = await mkdtemp(join(tmpdir(), "fuyao-goal-bcp-"));
     const saved = { ...process.env };
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -31,10 +32,7 @@ for (const goalFirst of [false, true]) {
       }
       const goal = { id: "fixture-goal", text: "GOAL_OBJECTIVE_UNIQUE complete isolated task", status: "active", startedAt: Date.now(), updatedAt: Date.now(), iteration: 1, tokensUsed: 0, timeUsedSeconds: 0, baselineTokens: 0, automaticModelTurns: 0, toolFreeRepeatCount: 0 };
       sm.appendCustomEntry("goal-state", { goal });
-      const manifest = JSON.parse(await readFile(join(bcpPackage, "package.json"), "utf8")) as { pi: { extensions: string[] } };
-      const fixture = join(dir, "bcp.ts");
-      await writeFile(fixture, `import { createAcpExtension } from ${JSON.stringify(join(bcpPackage, manifest.pi.extensions[0]!))}; export default createAcpExtension({ autoUpdate: false, delegate: { enabled: false }, modelContextLimit: 1000000, preserveRecentMessages: 2 });`);
-      const settingsManager = SettingsManager.inMemory({ packages: goalFirst ? [goalPath, fixture] : [fixture, goalPath] });
+      const settingsManager = SettingsManager.inMemory({ packages: [goalPath] });
       const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
       await resourceLoader.reload();
       expect(resourceLoader.getExtensions().errors).toEqual([]);
@@ -53,16 +51,7 @@ for (const goalFirst of [false, true]) {
       for (const name of ["goal_complete", "goal_blocked", "goal_wait"]) expect(session.getActiveToolNames()).toContain(name);
       const runner = session.extensionRunner;
       expect(JSON.stringify(await runner.emitContext(buildSessionContext(sm.getEntries(), sm.getLeafId()).messages))).toContain("GOAL_OBJECTIVE_UNIQUE");
-      const args = { content: [{ startId: "m00002", endId: "m00003", summary: "SUMMARY_ONLY old evidence consumed, no pending tasks in these entries." }] };
-      sm.appendMessage({ ...reply("compress"), stopReason: "toolUse", content: [{ type: "toolCall", name: "compress", id: "fold", arguments: args }] });
-      const result = await session.getToolDefinition("compress")!.execute("fold", args, undefined, undefined, runner.createToolContext("fold", undefined));
-      expect(JSON.stringify(result)).toContain("b1=");
-      sm.appendMessage({ role: "toolResult", toolName: "compress", toolCallId: "fold", content: result.content, isError: false, timestamp: Date.now() });
       await runner.emit({ type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-      const main = JSON.stringify(await runner.emitContext(buildSessionContext(sm.getEntries(), sm.getLeafId()).messages));
-      expect(main).toContain("SUMMARY_ONLY");
-      expect(main).not.toContain("RAW_FOLDED_EVIDENCE");
-      expect(main).toContain("GOAL_OBJECTIVE_UNIQUE");
       await runner.emitBeforeAgentStart("user continuing task", undefined, { cwd: dir });
       await runner.emit({ type: "agent_start" });
       await runner.emit({ type: "agent_end", messages: [reply("intermediate progress")] });
@@ -83,7 +72,6 @@ for (const goalFirst of [false, true]) {
       }));
       const completed = JSON.stringify(await session.extensionRunner.emitContext(buildSessionContext(sm.getEntries(), sm.getLeafId()).messages));
       expect(completed).toContain("Goal mode is inactive.");
-      expect(completed).not.toContain("RAW_FOLDED_EVIDENCE");
       await session.extensionRunner.emit({ type: "agent_end", messages: [reply("done")] });
       await session.extensionRunner.emit({ type: "agent_settled", aborted: false });
       expect(queued).toHaveLength(1);

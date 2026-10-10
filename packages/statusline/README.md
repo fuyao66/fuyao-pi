@@ -10,8 +10,11 @@ Existing `<agent-dir>/pi-statusline.json` settings and the `/statusline` menu ar
 preserved, including palette, segment order, model shortening and icons.
 
 - Context: `26.0% 104k/400k`. Values come from Pi and may be estimates; unknown
-  usage is `?`, and over-window values are not clamped. This is not the BCP
-  compressed-message count or an independent provider measurement.
+  usage is `?`, and over-window values are not clamped. BC now folds the outgoing
+  request in a local proxy after Pi builds its context. This footer does not
+  independently measure that final proxy-folded payload or its token count; Pi's
+  context estimate can therefore differ. It is not a compression-block count or
+  an independent provider measurement.
 - Cache: `R… W… CHavg 82.7%`. Average = cumulative cacheRead /
   (input + cacheRead + cacheWrite). Cache writes are misses, output is excluded.
   Includes recorded tool side-call, compaction and branch-summary usage, following

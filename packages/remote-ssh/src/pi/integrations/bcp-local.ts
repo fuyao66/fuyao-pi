@@ -14,9 +14,10 @@ export class BcpLocalArtifacts {
   }
   observe(name: string, content: readonly { type: string; text?: string }[], isError: boolean): void {
     if (name !== "decompress" || isError) return;
-    // BCP reports an export in its first line. Do not scan restored payload text.
-    const first = content.find((item) => item.type === "text")?.text?.split("\n", 1)[0];
-    const match = first?.match(/^(?:Block|Message) .+ written to (\/.*)\.$/);
+    // Recognize the complete Billion Context file receipt, never a path quoted
+    // inside inline restored history. Do not exempt the surrounding directory.
+    const text = content.find((item) => item.type === "text")?.text;
+    const match = text?.match(/^\[Block [^\r\n]+ content — \d+ item\(s\)(?:, full)?\]\nContent \(\d+ chars\) written to: (\/[^\r\n]+)\nUse the read tool to access it\.$/);
     if (match) this.exported.add(resolve(match[1]));
   }
 }

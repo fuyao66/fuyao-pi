@@ -6,23 +6,23 @@
 
 ## 插件清单
 
-共 **10 个插件包：1 个自研、3 个本地改装、6 个社区插件**。Pi core 是运行底座，不计入插件数量。
+共 **10 个启用插件包：1 个自研、3 个本地维护派生插件、6 个社区插件**。Pi core 是运行底座，不计入插件数量；Advisor 保留源码但默认禁用。
 
 | 插件 | 归属 / 来源 | 作用 |
 | --- | --- | --- |
 | [Remote SSH](packages/remote-ssh/README.zh-CN.md) | 自研，`pi-ssh-remote` | 通过 SSH 执行核心工作区工具，继承 delegate 的远端连接，控制面留在本地 |
-| [Advisor](packages/advisor/UPSTREAM.md) | 本地维护的派生插件 | 由另一模型提供第二意见，使用 BCP 处理后的上下文而非重放原始历史 |
-| [Memory](packages/memory/UPSTREAM.md) | 本地维护的派生插件 | BCP 摘要跨会话检索、项目隔离、自动增量同步及可选 Embedding 混合检索 |
+| [Advisor](packages/advisor/UPSTREAM.md) | 保留派生源码，禁用 | 历史 BCP 审核集成，尚未认证当前 BC 代理兼容性 |
+| [Billion Memory](packages/bili-memory/README.md) | 本地维护的派生插件 | 授权 BC/迁移摘要检索、精确工作区证据、增量同步及可选混合检索 |
 | [Statusline](packages/statusline/README.md) | 本地维护的派生插件 | 原生底栏、累计缓存命中率及自适应换行 |
 | [GPT Fast](packages/gpt-fast-mode/README.md) | 本地维护的派生插件 | 按用户模型名单切换 priority 请求字段 |
-| `billion-context-pi`（BCP） | 社区，可直接安装 | 长上下文压缩、摘要恢复、上下文诊断和子代理委托 |
+| `billion-context`（BC） | 社区，可直接安装 | Pi 原生入口与本地代理，负责上下文压缩、恢复、诊断和委托 |
 | `@juicesharp/rpiv-ask-user-question` | 社区，可直接安装 | 结构化提问，提供单选、多选及自定义输入 |
 | `@juicesharp/rpiv-todo` | 社区，可直接安装 | 管理任务列表、状态及依赖关系 |
 | `pi-web-access` | 社区，可直接安装 | 网页搜索、内容抓取和来源核查 |
 | `@narumitw/pi-goal` | 社区，可直接安装 | 设置会话目标，在限制内自动推进并报告完成或阻塞 |
 | `pi-invisible-continue` | 社区，可直接安装 | 自动发送续跑信号，减少手动催促继续 |
 
-五个本地插件通过本仓库构建、setup 加载；六个社区插件保留上游实现。具体版本、上游链接、改装说明和独立安装命令见[完整清单](docs/plugins.md)。
+四个本地插件由本仓库启用；Advisor 仅保留源码。六个社区插件保留上游实现。具体版本、上游链接、改装说明和独立安装命令见[完整清单](docs/plugins.md)。
 
 ## 快速开始
 
@@ -57,24 +57,24 @@ bun run smoke:pi
 
 模型访问权限在本地 Pi 中单独配置；仓库不提供 Advisor 审核模型选择或 Memory Embedding 服务凭证。使用自定义 agent 目录时，setup、update 和启动需使用相同的 `PI_CODING_AGENT_DIR`；个别插件状态仍使用固定的 home 路径。
 
-**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 Advisor、Memory、Remote SSH、Statusline 和 GPT Fast 注册为独立本地包，`pi list` 可分别查看。不要再安装这些本地插件的上游版本。
+**支持的安装方式是 clone 后构建。** 直接 `pi install git:github.com/fuyao66/fuyao-pi` 不会编译 worker 或安装配套插件清单。setup 将 Billion Memory、Remote SSH、Statusline 和 GPT Fast 注册为独立本地包，`pi list` 可分别查看，同时移除暂缓适配的 Advisor 声明。不要再安装这些本地插件的上游版本。
 
 ## 日常入口
 
 - **`/memory`**：浏览摘要、查看来源和向量状态、执行维护。模型检索默认当前工作区；跨项目或旧历史/未知归属需显式 `scope: "all"`。
-- **`/advisor`**：选择审核模型；咨询单独计费，必须单独调用并使用新鲜的压缩后上下文快照。
+- **Advisor**：当前配置禁用；保留的 BCP 契约不能证明其与 BC 代理兼容。
 - **`/remote-connect`**、**`/remote-status`**、**`/remote-exit`**：进入、检查和退出 SSH 工作区。
 - 压缩、委托及配套插件命令由各自上游负责，见[插件清单](docs/plugins.md)。
 
-Memory Embedding 需明确启用，会向外部服务发送脱敏后的摘要前缀和查询。脱敏不能保证移除一切敏感内容；启用前请阅读 [Memory 配置与限制](packages/memory/README.md)。
+Memory Embedding 需明确启用，会向外部服务发送脱敏后的摘要前缀和查询。脱敏不能保证移除一切敏感内容；启用前请阅读 [Memory 配置与限制](packages/bili-memory/README.md)。
 
 ## 项目结构
 
 ```text
 package.json / bun.lock  整体组合入口、运行基线与依赖锁
 packages/
-  advisor/               本地维护的 BCP 兼容审核扩展
-  memory/                本地维护的 BCP 记忆增强扩展
+  advisor/               保留的历史 BCP 派生源码，禁用
+  bili-memory/           Billion Memory：BC 与迁移摘要检索
   remote-ssh/            自研远程执行扩展与 worker
   statusline/             原生底栏派生插件
   gpt-fast-mode/          按模型名单切换 priority
@@ -91,10 +91,12 @@ skills/ prompts/         个人资源预留目录，目前仅占位
 ## 边界与维护原则
 
 - Pi core 跟随上游；派生扩展保留许可证和归属，升级须人工审查，不盲目覆盖本地修改。
-- 模型、会话、UI、Advisor、Memory 和 BCP 编排留在本地；只有受支持的工作区操作远程执行。其他插件**不会自动获得 SSH 兼容性**。
-- 公开默认关闭 Pi 原生自动压缩，以配合 BCP；重试上限为 20 次。setup 会为固定版本配置关闭 BCP 自动更新。已有设置优先，请根据费用与延迟调整。
+- 模型、会话、UI、BC 代理与 Billion Memory 索引留在本地；只有受支持的工作区操作远程执行。其他插件**不会自动获得 SSH 兼容性**。
+- 公开默认关闭 Pi 原生自动压缩，以配合 BC；重试上限为 20 次。setup 设置 BC `autoUpdate: false`、`advisoryCheck: true`：普通升级须审查，严重缺陷自动修复保留，可能改变实际安装版本。已有 Pi 偏好优先，请根据费用与延迟调整。
 - 凭证、私有服务地址、主机信息、会话及数据库不入库。setup 只合并声明和默认值，不安装模型、不复制插件私密状态。
 - `bun run check` 包含 Memory 的 Node SQLite 测试。SSH smoke 使用进程替身，不是真实 SSH 服务；真实终端视觉、供应商请求及 ARM64 运行需另行验证。
+
+BCP 已替换为 BC；Billion Memory 使用公开的精确代理快照及独立的 `~/.pi/bili-memory/` 索引。旧库全部 845 条摘要已转为授权的不可变历史归档，704 条原向量完整保留在新索引；另将仍保留的 16 份 BCP 会话重建为同名、完整 Pi 历史及原生 BC 状态，发布时保留 574 个压缩块，其中 396 个活跃。BC 本身没有改动；嵌套父块 `full` 解压仍有上游限制，需要时逐个恢复子块。见[迁移与验收](docs/billion-context-migration.md)。
 
 新增扩展和升级流程见[维护指南](docs/maintenance.md)。当前契约与历史提案的区分见[文档导航](docs/README.md)。
 

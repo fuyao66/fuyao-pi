@@ -7,14 +7,14 @@ import { spawnSync } from "node:child_process";
 
 test("real extension scans trigger background startup/incremental embedding; delegates and shutdown stop it", () => {
   const dir = mkdtempSync(join(tmpdir(), "memory-auto-lifecycle-"));
-  mkdirSync(join(dir, ".pi"));
-  writeFileSync(join(dir, ".pi/fuyao-memory-embedding.json"), JSON.stringify({ enabled: true, autoBackfill: true,
+  mkdirSync(join(dir, ".pi/bili-memory"), { recursive: true });
+  writeFileSync(join(dir, ".pi/bili-memory/embedding.json"), JSON.stringify({ enabled: true, autoBackfill: true,
     baseUrl: "https://example.invalid/v1", dimensions: 2, apiKeyEnv: "TEST_AUTO_KEY" }));
   try {
     const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
       import assert from 'node:assert/strict';
       import {join} from 'node:path';
-      const {default:factory,loadSqlite,MemoryDb,configureForTests}=await import('./packages/memory/src/extension.ts');
+      const {default:factory,loadSqlite,MemoryDb,configureForTests}=await import('./packages/bili-memory/src/extension.ts');
       const source=join(process.env.HOME,'allowed.json.acp.json');
       const {writeFileSync}=await import('node:fs'); writeFileSync(source,JSON.stringify({blocks:[{blockId:'b1',summary:'synthetic summary'}]}));
       writeFileSync(join(process.env.HOME,'.pi/sources'),JSON.stringify({id:'test',adapter:'pi-sidecar',root:process.env.HOME,pattern:'allowed.json.acp.json'}));

@@ -1,11 +1,9 @@
-# BCP 增强记忆插件
+# Billion Memory（bili-memory）
 
 这是 [fuyao-pi 个人 Agent 环境](../../README.zh-CN.md) 的一项能力，不是独立发行的 Agent。
 本文是当前本地派生版本的使用契约；来源见 [UPSTREAM.md](UPSTREAM.md)，整体边界见[架构](../../docs/architecture.md)。
 
-基于 [`pi-billion-memory@0.5.3`](UPSTREAM.md) 的个人派生插件：从允许的 ACP
-压缩摘要中检索历史记忆，保留 FTS5 trigram / LIKE，增加可选的 Embedding 混合检索。
-不改变 BCP 的压缩机制，不自动恢复或重放完整对话。
+基于 [`pi-billion-memory@0.5.3`](UPSTREAM.md) 的个人派生插件，已适配 Billion Context（BC）：从授权的 BC v3 会话和不可变迁移归档中检索历史摘要，保留 FTS5 trigram / LIKE 与可选 Embedding 混合检索。它不修改 BC 压缩算法，不自动向模型注入记忆，也不自动恢复或重放完整对话。旧 BCP 解析器仅用于明确的离线迁移/测试，正常运行不读取旧 sidecar。
 
 ## 检索流程
 
@@ -27,15 +25,20 @@
 
 ## 本地配置
 
-已有数据库和允许列表继续使用：
+Memory 自有文件与 BC 会话分离，不写入上游会话目录：
 
 ```text
-~/.pi/pi-billion-memory.json
-~/.pi/pi-billion-memory.sources.jsonl
-~/.pi/pi-billion-memory.db
+~/.pi/bili-memory/config.json
+~/.pi/bili-memory/sources.jsonl
+~/.pi/bili-memory/memory.sqlite
+~/.pi/bili-memory/history/*.json
+~/.pi/bili-memory/embedding.json
+~/.pi/bili-memory/memory.log
 ```
 
-另外创建 `~/.pi/fuyao-memory-embedding.json`（不提交到 Git）：
+BC 会话目录优先 `BILI_SESSIONS_DIR`，否则为 `${XDG_DATA_HOME:-~/.local/share}/billion-context/sessions`。默认来源只接受 `bili-session` 和 `memory-history`。迁移归档须有 SHA256 注册及明确启用状态；通配符本身不会放行未注册或改过内容的文件。旧数据库/配置保留作回滚，不再并行摄取；首次迁移和退役后补迁须独立备份、来源审批及副本演练，不能覆盖正在增长的新索引。
+
+可选创建 `~/.pi/bili-memory/embedding.json`（不提交到 Git）：
 
 ```json
 {
@@ -45,7 +48,7 @@
   "model": "text-embedding-3-large",
   "dimensions": 3072,
   "apiKeyEnv": "FUYAO_MEMORY_EMBEDDING_KEY",
-  "apiKeyFile": "~/.pi/fuyao-memory-embedding.key",
+  "apiKeyFile": "~/.pi/bili-memory/embedding.key",
   "revision": "1",
   "timeoutMs": 10000,
   "maxInputBytes": 6000,
@@ -82,8 +85,7 @@ Memory 在 **聊天区** 只输出一行英文提示，不显示边框、主题�
 Memory · Indexed 2 summaries · Saved 2 vectors
 ```
 
-成功的 BCP `compress` 工具完成事件触发后台当前会话扫描，不等整个任务结束。
-BCP normally awaits atomic sidecar persistence before returning (persistence errors may be recorded internally).
+成功的 BC `compress` 工具完成事件触发后台当前会话扫描，不等整个任务结束。BC 工具成功与 v3 会话文件落盘并非同一时刻；收集器使用公开的精确会话快照与对应落盘文件，不猜测“最新文件”。
 扫描延迟 250ms，最多执行三次跟进以覆盖短暂落盘延迟；连续事件合并，扫描中收到事件不会丢失。
 超出该窗口的落盘失败仍由启动/轮末/搜索扫描兜底，不是永久文件监听。不会阻塞工具回调或修改编辑器/页脚。
 开启自动补建时，入库反馈等待下一批补建结束，摘要入库与向量保存合为一张卡，不再由
@@ -94,7 +96,7 @@ BCP normally awaits atomic sidecar persistence before returning (persistence err
 仅事务提交成功后显示数量；
 重复扫描无新增不会输出，连续失败只输出一次退避提示，退出退避再提示一次（不等同于服务商恢复证明）。
 卡片为 Pi `custom` entry，存入会话供用户回看，**不进入模型上下文、不触发续答**。
-非 TUI 和 BCP 子代理不输出自动卡片；关闭/切换会话会丢弃旧的延迟显示任务。
+非 TUI 和 BC 子代理不输出自动卡片；关闭/切换会话会丢弃旧的延迟显示任务。
 
 用户入口只有 `/memory`，不再接受任何旧子命令参数。菜单提供浏览、活动、向量状态、
 扫描、补建、来源和清理；补建数量通过输入框指定 1–100 条，清理保留天数为 0–36500。
@@ -106,7 +108,7 @@ RPC/无终端面板时 `/memory` 返回简短状态；不会创建 TUI 组件。
 批间至少等待 1 秒，不阻塞聊天。之后 `compress` 完成扫描、`agent_settled` 兜底扫描、搜索前扫描和 rescan
 会通知同一后台任务，已有有效向量跳过。失败指数退避 30 秒至 5 分钟，触发事件不绕过退避；
 无进展批次暂停直到下一次触发；期间到达的新摘要信号会再尝试一轮，避免丢失补建机会。`/memory` 菜单的向量状态项显示任务状态。
-BCP 子代理（`PI_ACP_DELEGATE_DEPTH>0`）不启动自动任务。自动上传每个网络批次前会
+BC 子代理（上游保留标记 `PI_ACP_DELEGATE_DEPTH>0`）不启动自动任务。自动上传每个网络批次前会
 重读来源允许列表并列出当前允许的文件，禁用/删除来源、被排除目录和已消失文件不自动上传。
 空白输入前缀跳过，不阻塞后面的摘要；因此这类条目可一直显示为 pending，但不会忙重试。
 
@@ -130,16 +132,12 @@ SSH scope adds the target, port and remote working directory, via a small read-o
 remote-ssh event. Different aliases, clones and subdirectories are not automatically
 merged. An unavailable remote is never treated as the local workspace.
 
-New persisted message IDs receive write-once workspace evidence. A BCP block is
-assigned only when all retained references have reliable evidence for one workspace.
-Old/resumed messages, transitions with uncertain timing, mixed workspaces and capped
-reference lists remain unknown/mixed. Tool-call suffixes resolve to parent message IDs
-for project attribution only. This is conservative retrieval isolation, not a sandbox.
-Use `scope: "all"` deliberately to retrieve legacy history. No old rows are relabeled
-from `sources.cwd`; project display names are not identity keys.
+The collector accepts only a public exact snapshot with matching conversation/session identity and unique ordered message identities. The initial/resumed snapshot is a baseline, not proof of historical ownership. Only continuous same-workspace append-only additions receive write-once evidence; unavailable snapshots, rewrites/branches and workspace transitions leave uncertain messages unassigned.
+
+Reliable per-message evidence produces many-to-many block/project links even when part of a summary remains unknown. Completeness stays known/mixed/unknown; a capped reference list is incomplete. Tool-call suffixes resolve to parent IDs only for project attribution. Current-scope retrieval ranks proven associations first via hybrid search, then may add separately labelled session-directory clues using keyword-only fallback. A directory clue is not remote-workspace ownership proof. Use `scope: "all"` deliberately for wider history. No old row is relabelled from the latest cwd, and project display names are not identity keys. This is conservative retrieval isolation, not a sandbox.
 
 Search, summary/raw expansion and automatic/manual embedding all validate enabled sources,
-file format, block presence and the stored content/reference revision. Inactive BCP
+file format, block presence and the stored content/reference revision. Inactive BC
 child blocks remain valid if still present. Revoked, missing, unreadable, absent or stale
 records stay in the database but are excluded from tools/uploads; the management browser
 shows the policy and attribution status. Validation is an operation snapshot, not an
@@ -154,8 +152,7 @@ claim a misleading ratio. Global `/memory` coverage includes retained excluded r
 Authorization uses an indexed, operation-local SQLite temporary relation, not repeated
 JSON-array scans. Parsed source documents use a bounded metadata-validated cache;
 source rules and file listing are still refreshed, including around network requests.
-BCP schema v1 and unversioned legacy sidecars are supported; unknown versions are
-skipped and logged without advancing ingestion watermarks. Source patterns must be
+Normal ingestion supports BC v3 envelopes and registered `bili-memory-history` v1 archives only. Legacy adapters are gated behind explicit offline migration/tests. Unknown versions are skipped and logged without advancing ingestion watermarks. Source patterns must be
 relative and cannot contain `.`/`..`; literal directory prefixes must be real directories,
 not symlinks. These checks do not provide an atomic filesystem security boundary.
 
@@ -171,7 +168,7 @@ system-prompt builder, alongside their tool descriptions and parameter schemas. 
 rules cover when to search, current-workspace scope, historical evidence versus current
 instructions, summary paging after insufficient previews, and narrow raw expansion only
 when exact wording matters. Stored memories are not injected into the system prompt;
-Memory does not replace the prompt or install BCP context hooks. A real Pi SDK regression
+Memory does not replace the prompt, install compression context hooks or inspect a guessed proxy session. A real Pi SDK regression
 checks that these rules appear in the generated default system prompt. A forced/custom
 system prompt can override native sections; guidance cannot guarantee model compliance.
 
@@ -199,17 +196,16 @@ This also works for authorized summaries without message references or original 
 Current workspace is the default; legacy/cross-project records require explicit `scope: "all"`.
 Source, revision and workspace are revalidated before return; cancellation returns no page.
 `expandEnabled` remains false by default, and `list` remains the default mode. Raw
-expansion still uses `list` followed by `full` with explicit `select`; summary mode
-adds no tool and does not call an embedding or chat provider.
+expansion for new BC sessions uses `list` followed by `full` with explicit `select` and the returned `revision`. Indices are numbered retained-text chunks of up to 4000 characters, not message indices. It reads only upstream-retained `blockContents[blockId].full.text`, redacts before splitting, and never recursively follows placeholders or nested blocks. Missing retained text must use summary mode. Migrated `memory-history` archives expose summaries only: they do not import old raw logs or live fold state. A separate one-time rebuild published 16 retained Pi sessions with native BC state; these are `bili-session` sources, not an added raw-history capability of the archive reader. BC retained-text expansion still follows the same nonrecursive contract, including any upstream nested-parent cache limitation. Summary mode adds no tool and does not call an embedding or chat provider.
 
 Pruning removes the local index/vectors and records path-based tombstones; it does not
 erase original sessions, and copied/renamed sources may be indexed again.
 
 ## 项目集成与验证
 
-setup 注册独立的 `packages/memory` 本地包，由其 manifest 加载 `src/index.ts`，并替换外部 memory 包。
+setup 注册独立的 `packages/bili-memory` 本地包，由其 manifest 加载 `src/index.ts`，并替换外部 memory 包。
 不要同时安装原插件。Node >=22.19（`node:sqlite`）为必需；Bun 用于仓库构建，
 记忆测试使用 Node：`bun run test:memory`。`bun run check` 会包含全部记忆测试。
 
-保留上游 MIT 许可证与来源；本地增强包含同步/权限、项目范围、后台调度、混合检索及展示模块。
+保留上游 MIT 许可证与来源；本地增强包含 BC 精确快照、不可变历史归档、修订绑定读取，以及同步/权限、项目范围、后台调度、混合检索和展示模块。生产旧库已全量保留 845 条摘要、704 条原向量；验收与 mock/实测边界见[迁移记录](../../docs/billion-context-migration.md)和 [VALIDATION.md](VALIDATION.md)。
 升级上游时需对照这些边界人工合并并运行回归。审核与 SSH 插件各自位于独立的 `packages/` 子目录。

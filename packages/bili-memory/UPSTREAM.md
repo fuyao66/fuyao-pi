@@ -1,10 +1,10 @@
-# BCP memory enhancement — source provenance
+# Billion Memory — source provenance
 
 - Upstream: https://github.com/tjp72/pi-billion-memory
 - Imported version: `pi-billion-memory@0.5.3`
 - Imported Git commit: `52e5a01c62df4d40421b93da4528c9e969061c46`
 - Author: tjp72; MIT notice retained in `LICENSE`.
-- Local private derivative: `@fuyao/pi-memory@0.5.3-fuyao.1`, not published to npm.
+- Local private derivative: `@fuyao/bili-memory@0.5.3-fuyao.1`, not published to npm.
 
 The upstream source modules and self-tests are retained. This derivative adds
 `src/embeddings.ts`, `src/hybrid.ts`, `src/auto-embed.ts`, manual/opt-in automatic embedding and integration
@@ -17,7 +17,7 @@ compression without waiting for the entire agent run. `src/project-scope.ts` and
 `src/source-policy.ts` provide conservative workspace attribution and shared source,
 block and revision authorization. Authorization snapshots use indexed temporary SQL
 relations; `src/source-cache.ts` caches parsed documents with bounded size and metadata
-invalidation while rules/listing refresh. BCP version and literal source-prefix checks
+invalidation while rules/listing refresh. Format version and literal source-prefix checks
 reject unsupported formats and traversal/symlinks. `src/snippets.ts` provides bounded
 query-centered excerpts. Semantic queries require a valid authorized vector and report
 scope-specific coverage, with keyword fallback. Ingestion now synchronizes revisions transactionally,
@@ -33,7 +33,7 @@ claim to satisfy upstream's no-network search policy. No embedding SDK or vector
 database is needed; vectors are stored in the existing SQLite database.
 `autoBackfill:true` (public default false) separately authorizes background summary
 uploads after startup/ingestion. A coalescing, session-scoped scheduler batches work,
-backs off failures and stops on shutdown. BCP delegates skip auto tasks; a short
+backs off failures and stops on shutdown. BC delegates (retained upstream `PI_ACP_DELEGATE_DEPTH` flag) skip auto tasks; a short
 SQLite lease reduces cross-process duplicate backfills without holding HTTP transactions.
 Manual backfill remains interactive. See README for timing and capacity limits.
 
@@ -42,15 +42,16 @@ This is best-effort sanitization, **not a guarantee that summaries contain no
 sensitive information**. No raw messages, expanded messages, source file paths,
 or whole sessions are sent to the embedding service. Optional upstream
 `memory_expand` remains opt-in: its `summary` mode reads bounded, revision-bound
-pages from the stored summary; `list`/`full` read local original messages. Neither is
-used for embedding. This enhancement adds no BCP context hooks or compression
-algorithm changes.
+pages from the stored summary. For new BC sessions, `list`/`full` read only retained local block text, via explicit numbered chunks and a revision check; nested placeholders are not followed. Migrated history supports summaries only, not old raw-session reconstruction. Neither path is used for embedding. This enhancement adds no compression context hooks or upstream algorithm changes.
 
 Root setup replaces upstream/standalone memory package declarations to avoid
 duplicate `memory_search` and `/memory` registrations. Explicit legacy entries in
 `settings.extensions` require manual removal. Existing database and allow-list
-configuration paths are intentionally retained for compatibility. Embedding
-configuration and credentials stay outside the repository.
+configuration paths are retained only as rollback evidence. New state lives in `~/.pi/bili-memory/`; normal runtime admits only BC v3 sessions and registered immutable `bili-memory-history` v1 archives. Legacy readers are restricted to explicit offline migration/tests. Embedding configuration, credentials and exact historical-source approvals stay outside the repository.
+
+## BC adaptation
+
+`src/bili-client.ts`, `src/bili-identity.ts` and `src/bili-collector.ts` consume public exact proxy snapshots and match authorized persisted sessions, never the newest-file heuristic. `src/bili-project-evidence.ts` records only continuous append-only workspace evidence. `src/bili-expand.ts` validates retained-text revisions. `src/history-archive.ts`, `src/project-migration.ts`, `src/migration-sources.ts`, `src/migration-approval.ts` and `src/migration-tail.ts` provide the one-time immutable archive migration, evidence preservation, source approval and retired-writer append-only completion. These are local adaptations, not upstream features or a new npm release.
 
 Tests use Node's `node:sqlite` (Node >=22.19), not Bun's test runtime. Run
 `bun run test:memory` or the root `bun run check`. When upgrading upstream,

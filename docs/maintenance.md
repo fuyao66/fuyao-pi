@@ -54,7 +54,7 @@ should be fixed in a reviewed update, not hidden by editing installed package fi
 5. Update the owning package contract and relevant integration docs. Restart Pi when
    changing loaded extension code; do not assume the running process hot-reloads it.
 
-For documentation-only changes, check links, paths and example commands.
+For documentation-only changes, check links, paths and example commands. BC wire/native integration is checked separately with `node --import tsx scripts/verify-billion-context.mjs <reviewed-installed-package> [installed-goal-package]`; this harness invokes the native probe, which launches `scripts/verify-billion-delegate.mjs` through the real dispatcher for delegate/SSH-shim routing. Run the parent harness, not the internal delegate child alone. The harness isolates runtime state and uses a loopback mock provider. See [migration and acceptance](billion-context-migration.md); retained BCP records are historical only.
 
 ## Upgrading the environment
 
@@ -66,8 +66,7 @@ For documentation-only changes, check links, paths and example commands.
   installer target against the manifest before switching, and keep the previous
   executable/profile backup for rollback. Do not run an unreviewed core update.
 - Community packages are pinned in `config/plugins.json`; update them as one reviewed
-  profile. BCP's official `autoUpdate` setting is disabled by `bun run setup --apply`;
-  use `ACP_AUTO_UPDATE=0` only as a temporary diagnostic override.
+  profile. `bun run setup --apply` sets BC `autoUpdate: false`, `advisoryCheck: true`: ordinary upgrades are reviewed, while critical-defect auto-repairs remain enabled and may change the installed baseline. Environment overrides take precedence; verify actual proxy and disk versions.
 - A companion update changes `config/plugins.json`. Preview `bun run setup`, then apply
   and run `pi install <exact-source>` for each changed manifest entry using the correct
   agent directory (see the root README loop for a fresh profile). Pi's extension updater
