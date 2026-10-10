@@ -37,7 +37,7 @@ test("settings allowlist replaces defaults, invalid and empty lists fail closed"
 });
 
 test("upstream declarations migrate to local once without duplicate commands", () => {
-  const sources = ["npm:billion-context-pi@fixture"];
+  const sources = ["npm:billion-context@fixture"];
   const first = mergeProfile({ packages: ["npm:@tunnckocore/pi-gpt-fast-mode@0.4.0", "git:github.com/tunnckoCore/pi-gpt-fast-mode", "npm:unrelated"] }, {}, sources, "/repo", "/agent");
   expect(first.packages?.filter(e => JSON.stringify(e).includes("gpt-fast-mode"))).toEqual(["/repo/packages/gpt-fast-mode"]);
   expect(mergeProfile(first, {}, sources, "/repo", "/agent")).toEqual(first);

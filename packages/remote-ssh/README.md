@@ -21,7 +21,7 @@ Delegates open independent SSH workers. Omit delegate `cwd`; the bridge keeps th
 
 ## Local RPIV companions
 
-Historical companion validation used `@juicesharp/rpiv-ask-user-question@2.11.0` and `@juicesharp/rpiv-todo@2.11.0` alongside Pi + BCP; current pins are in `config/plugins.json`. They need no remote adapter or worker dependency, and no plugin source patches:
+The pinned `@juicesharp/rpiv-ask-user-question` and `@juicesharp/rpiv-todo` companions remain local alongside Pi + BC; current versions are in `config/plugins.json`. They need no remote adapter or worker dependency, and no plugin source patches:
 
 - `ask_user_question` stays on the client: terminal overlays in interactive Pi, select/input dialogs with a compatible RPC UI. Headless delegates cannot ask interactive questions; the plugin hides the tool before a turn and rejects direct calls without UI. Its optional external editor also runs locally, using local configuration and temporary files.
 - `todo` belongs to the Pi session, not a server directory. Connecting, switching servers or exiting does not start a separate task list. Reload reconstructs state from local session tool-result history; child sessions have their own lists.

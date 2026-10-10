@@ -14,7 +14,7 @@ async function spec() {
   return { ownerToken: "test-owner", assembly: assembly.request, tools: assembly.tools, connectOptions: { target: "host", displayTarget: "host" }, workerPath: "/worker", cwd: "/remote" };
 }
 
-describe("BCP stays local while workspace tools are remote", () => {
+describe("BC stays local while workspace tools are remote", () => {
   test("routes only dedicated artifacts and explicit successful decompress exports", () => {
     const artifacts = new BcpLocalArtifacts();
     expect(artifacts.isLocalRead({ path: join(tmpdir(), "acp-delegate/run.out") })).toBe(true);

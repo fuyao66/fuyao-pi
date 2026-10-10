@@ -19,7 +19,7 @@
 
 ## 本地 RPIV 附加插件
 
-已验证与 `@juicesharp/rpiv-ask-user-question@2.11.0`、`@juicesharp/rpiv-todo@2.11.0` 同时加载。无需远端 adapter、worker 依赖，也不修改这些插件源码：
+固定版本的 `@juicesharp/rpiv-ask-user-question`、`@juicesharp/rpiv-todo` 与 Pi + BC 同时加载时仍留在本地，当前版本见 `config/plugins.json`。无需远端 adapter、worker 依赖，也不修改这些插件源码：
 
 - `ask_user_question` 留在客户端：交互 Pi 使用终端弹窗，兼容的 RPC UI 使用 select/input 对话框。无 UI 的 delegate 不能交互提问；插件在回合开始前隐藏工具，直接调用也返回无 UI 错误。可选的外部编辑器同样在本地运行，使用本地配置和临时文件。
 - `todo` 属于 Pi 会话，而非某个服务器目录。连接、切换服务器、退出远端不会另建任务列表；reload 从本地会话的工具结果历史恢复状态，子会话有各自的列表。

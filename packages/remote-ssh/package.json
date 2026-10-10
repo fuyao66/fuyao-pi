@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Fuyao Pi first-party remote workspace bridge for Pi with optional BCP integration",
+  "description": "Fuyao Pi first-party remote workspace bridge for Pi with optional Billion Context integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/fuyao66/fuyao-pi.git",

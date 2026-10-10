@@ -281,7 +281,7 @@ export function buildPiWorkspaceStatus(
     },
     note:
       mode === "remote"
-        ? "Pi core tools run remotely. BCP context, delegate orchestration, session files, model requests and UI remain local."
+        ? "Pi core tools run remotely. BC context, delegate orchestration, session files, model requests and UI remain local."
         : mode === "unavailable"
           ? "Workspace tools fail closed until reconnection or /remote-exit."
           : "Local Pi tools are active.",
@@ -662,7 +662,7 @@ export async function installPiRemoteExtension(
     name: "remote_connect",
     label: "Remote Connect",
     description:
-      "Connect Pi + billion-context-pi to an SSH workspace. Pi filesystem/shell tools run remotely; BCP stays local.",
+      "Connect Pi + Billion Context (BC) to an SSH workspace. Pi filesystem/shell tools run remotely; BC stays local.",
     parameters: Type.Object({
       target: Type.String({ description: "SSH alias or user@host" }),
       cwd: Type.Optional(
@@ -966,7 +966,7 @@ export async function installPiRemoteExtension(
 
   pi.on("before_agent_start", (event) => {
     if (!state.selected) return;
-    return { systemPrompt: `${event.systemPrompt}\n\nSSH WORKSPACE: ${state.connectOptions?.displayTarget ?? "unavailable"}:${state.cwd ?? "unknown"}. Ordinary read/write/edit/bash/grep/find/ls paths are REMOTE, not the local process cwd. BCP context tools, delegate orchestration and sessions stay LOCAL. Delegates inherit this remote workspace; omit their cwd. Use read (not bash) for local BCP delegate/decompress output files. Local project instructions may describe the client: inspect remote AGENTS.md before editing. No local fallback on transport loss.` };
+    return { systemPrompt: `${event.systemPrompt}\n\nSSH WORKSPACE: ${state.connectOptions?.displayTarget ?? "unavailable"}:${state.cwd ?? "unknown"}. Ordinary read/write/edit/bash/grep/find/ls paths are REMOTE, not the local process cwd. BC context tools, delegate orchestration and sessions stay LOCAL. Delegates inherit this remote workspace; omit their cwd. Use read (not bash) for local BC delegate/decompress output files. Local project instructions may describe the client: inspect remote AGENTS.md before editing. No local fallback on transport loss.` };
   });
 
   pi.on("user_bash", async () => {

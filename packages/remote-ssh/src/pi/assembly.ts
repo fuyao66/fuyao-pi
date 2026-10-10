@@ -47,7 +47,7 @@ function objectSchema(value: unknown): boolean {
 export function restorePiRuntimeAssembly(request: RuntimeAssemblyRequest, tools: readonly PiAssemblyTool[]): PiRuntimeAssembly {
   const host = request.components[0];
   if (request.components.length !== 1 || !host || host.id !== PI_CORE_COMPONENT_ID || host.kind !== "host" || host.contractVersion !== PI_CORE_CONTRACT_VERSION || host.config !== undefined) {
-    throw new Error("Only the fixed Pi core worker contract is supported; BCP runs locally");
+    throw new Error("Only the fixed Pi core worker contract is supported; BC runs locally");
   }
   const names = new Set<string>();
   for (const tool of tools) {
@@ -63,7 +63,7 @@ export function restorePiRuntimeAssembly(request: RuntimeAssemblyRequest, tools:
     handshake: { host: "pi", hostVersion: host.version, runtimeVersion: PI_REMOTE_RUNTIME_VERSION, requestedTools: [...names], assembly: request, validateReady: (ready) => validatePiReadyMessage(assembly, ready) },
     workerBundle: { cacheNamespace: "pi-bcp-v1", companionArtifacts: [{ id: "photon", filePrefix: "photon-wasm", executableName: "photon_rs_bg.wasm" }] },
     knownWorkspaceTools: names,
-    executionRuntime: { local: "Pi + billion-context-pi:dist", remote: "model-free Pi core tools; BCP control plane remains local" },
+    executionRuntime: { local: "Pi + billion-context:pi-native", remote: "model-free Pi core tools; BC control plane remains local" },
   };
   return assembly;
 }

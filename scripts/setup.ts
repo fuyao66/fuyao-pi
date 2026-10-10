@@ -93,7 +93,7 @@ export function mergeProfile(existing: Settings, defaults: Settings, sources: st
       // disabled or selectively enabled compressor; require an explicit decision.
       if (!previous && legacy.some(entry => typeof entry === 'object' &&
         (entry.autoload === false || resourceTypes.some(type => entry[type] !== undefined)))) {
-        throw new Error('Legacy BCP has explicit resource filters; choose Billion Context enablement before applying setup');
+        throw new Error('Legacy compressor has explicit resource filters; choose Billion Context enablement before applying setup');
       }
     }
     // Preserve explicit resource filters on third-party packages.

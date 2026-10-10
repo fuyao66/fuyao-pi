@@ -11,7 +11,7 @@
 | 插件 | 作用 | 来源说明 |
 | --- | --- | --- |
 | Remote SSH | 远端工作区工具、继承 delegate 连接和本地编排 | [`packages/remote-ssh`](../packages/remote-ssh/README.zh-CN.md) |
-| Advisor（禁用） | 保留历史 BCP 派生源码，暂不认证 BC 代理兼容性 | [`packages/advisor/UPSTREAM.md`](../packages/advisor/UPSTREAM.md) |
+| Advisor（禁用） | 保留历史审核派生源码，暂不认证 BC 代理兼容性 | [`packages/advisor/UPSTREAM.md`](../packages/advisor/UPSTREAM.md) |
 | Billion Memory | BC 与授权迁移摘要的跨会话索引、工作区证据、同步和可选混合检索 | [`packages/bili-memory/UPSTREAM.md`](../packages/bili-memory/UPSTREAM.md) |
 | Statusline | 原生底栏、累计缓存率、自适应换行 | [`packages/statusline/UPSTREAM.md`](../packages/statusline/UPSTREAM.md) |
 | GPT Fast | 按用户模型名单切换 priority 请求字段 | [`packages/gpt-fast-mode/UPSTREAM.md`](../packages/gpt-fast-mode/UPSTREAM.md) |

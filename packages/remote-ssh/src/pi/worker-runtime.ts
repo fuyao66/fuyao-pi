@@ -14,7 +14,7 @@ export interface PiWorkerRuntime {
   close(): Promise<void>;
 }
 
-/** Deliberately no AgentSession, model, settings, extensions or BCP on the server. */
+/** Deliberately no AgentSession, model, settings, extensions or BC on the server. */
 export async function createPiWorkerRuntime(cwd: string, request: RuntimeAssemblyRequest): Promise<PiWorkerRuntime> {
   if (!isAbsolute(cwd) || !(await stat(cwd)).isDirectory()) throw new Error(`Remote cwd must be an existing absolute directory: ${cwd}`);
   const definitions = [createReadTool(cwd), createWriteTool(cwd), createEditTool(cwd), createBashTool(cwd, { exposeSessionEnvironment: false }), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)];

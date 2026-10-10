@@ -1,7 +1,7 @@
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
-/** Only BCP's own read artifacts are local; never exempt /tmp or ~/.cache wholesale. */
+/** Only BC's own read artifacts are local; never exempt /tmp or ~/.cache wholesale. */
 export class BcpLocalArtifacts {
   private readonly exported = new Set<string>();
   private readonly roots = [join(tmpdir(), "acp-delegate"), join(homedir(), ".cache/pi/acp-decompress")];
@@ -22,7 +22,7 @@ export class BcpLocalArtifacts {
   }
 }
 
-/** BCP spawns Node locally: a remote cwd must never become child_process.spawn.cwd. */
+/** BC spawns Node locally: a remote cwd must never become child_process.spawn.cwd. */
 export function guardDelegateCwd(input: Record<string, unknown>, localCwd: string, remoteCwd: string): { block: true; reason: string } | undefined {
   const requested = input.cwd;
   if (requested !== undefined && requested !== "" && requested !== localCwd && requested !== remoteCwd) {

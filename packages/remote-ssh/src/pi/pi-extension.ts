@@ -22,7 +22,7 @@ export default async function(pi: ExtensionAPI): Promise<void> {
     });
   } catch (error) {
     if (isInheritedBcpChild()) {
-      console.error("BCP SSH bridge initialization failed; refusing local fallback", error);
+      console.error("BC SSH bridge initialization failed; refusing local fallback", error);
       process.exit(1);
     }
     throw error;
