@@ -11,7 +11,7 @@
 | 插件 | 归属 / 来源 | 作用 |
 | --- | --- | --- |
 | [Remote SSH](packages/remote-ssh/README.zh-CN.md) | 自研，`pi-ssh-remote` | 通过 SSH 执行核心工作区工具，继承 delegate 的远端连接，控制面留在本地 |
-| [Advisor](packages/advisor/UPSTREAM.md) | 保留派生源码，禁用 | 历史 BCP 审核集成，尚未认证当前 BC 代理兼容性 |
+| [Advisor](packages/advisor/UPSTREAM.md) | 保留派生源码，禁用 | 历史审核集成，尚未认证当前 BC 代理兼容性 |
 | [Billion Memory](packages/bili-memory/README.md) | 本地维护的派生插件 | 授权 BC/迁移摘要检索、精确工作区证据、增量同步及可选混合检索 |
 | [Statusline](packages/statusline/README.md) | 本地维护的派生插件 | 原生底栏、累计缓存命中率及自适应换行 |
 | [GPT Fast](packages/gpt-fast-mode/README.md) | 本地维护的派生插件 | 按用户模型名单切换 priority 请求字段 |
@@ -61,8 +61,8 @@ bun run smoke:pi
 
 ## 日常入口
 
-- **`/memory`**：浏览摘要、查看来源和向量状态、执行维护。模型检索默认当前工作区；跨项目或旧历史/未知归属需显式 `scope: "all"`。
-- **Advisor**：当前配置禁用；保留的 BCP 契约不能证明其与 BC 代理兼容。
+- **`/bili-memory`**：只提供浏览记忆、查看状态、刷新记忆，不展开技术维护选项。模型检索默认当前工作区；跨项目或旧历史/未知归属需显式 `scope: "all"`。
+- **Advisor**：当前配置禁用；旧的上下文契约不能证明其与 BC 代理兼容。
 - **`/remote-connect`**、**`/remote-status`**、**`/remote-exit`**：进入、检查和退出 SSH 工作区。
 - 压缩、委托及配套插件命令由各自上游负责，见[插件清单](docs/plugins.md)。
 
@@ -73,7 +73,7 @@ Memory Embedding 需明确启用，会向外部服务发送脱敏后的摘要前
 ```text
 package.json / bun.lock  整体组合入口、运行基线与依赖锁
 packages/
-  advisor/               保留的历史 BCP 派生源码，禁用
+  advisor/               保留的旧审核派生源码，禁用
   bili-memory/           Billion Memory：BC 与迁移摘要检索
   remote-ssh/            自研远程执行扩展与 worker
   statusline/             原生底栏派生插件
@@ -96,7 +96,7 @@ skills/ prompts/         个人资源预留目录，目前仅占位
 - 凭证、私有服务地址、主机信息、会话及数据库不入库。setup 只合并声明和默认值，不安装模型、不复制插件私密状态。
 - `bun run check` 包含 Memory 的 Node SQLite 测试。SSH smoke 使用进程替身，不是真实 SSH 服务；真实终端视觉、供应商请求及 ARM64 运行需另行验证。
 
-BCP 已替换为 BC；Billion Memory 使用公开的精确代理快照及独立的 `~/.pi/bili-memory/` 索引。旧库全部 845 条摘要已转为授权的不可变历史归档，704 条原向量完整保留在新索引；另将仍保留的 16 份 BCP 会话重建为同名、完整 Pi 历史及原生 BC 状态，发布时保留 574 个压缩块，其中 396 个活跃。BC 本身没有改动；嵌套父块 `full` 解压仍有上游限制，需要时逐个恢复子块。见[迁移与验收](docs/billion-context-migration.md)。
+Billion Memory 通过精确的 BC 会话状态收录摘要，以可选的安全快照证明工作区归属，并使用独立的 `~/.pi/bili-memory/` 索引。旧库全部 845 条摘要已转为授权的不可变历史归档，704 条原向量完整保留在新索引；另将仍保留的 16 份旧会话重建为同名、完整 Pi 历史及原生 BC 状态，发布时保留 574 个压缩块，其中 396 个活跃。BC 本身没有改动；嵌套父块 `full` 解压仍有上游限制，需要时逐个恢复子块。见[迁移与验收](docs/billion-context-migration.md)。
 
 新增扩展和升级流程见[维护指南](docs/maintenance.md)。当前契约与历史提案的区分见[文档导航](docs/README.md)。
 

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { loadSqlite, MemoryDb } from '../src/extension.ts';
 import { HybridMemory } from '../src/hybrid.ts';
 import { sanitizeEmbeddingConfig } from '../src/embeddings.ts';
-import { recordMessageProjects, projectScope, scopeAllowedIds } from '../src/project-scope.ts';
+import { recordMessageProjects, recordBiliMessageProjects, projectScope, scopeAllowedIds } from '../src/project-scope.ts';
 
 test('Billion Context v3 preserves attribution refs and rejects unknown versions without advancing watermarks', async () => {
   await loadSqlite();
@@ -26,6 +26,8 @@ test('Billion Context v3 preserves attribution refs and rejects unknown versions
     assert.deepEqual(scopeAllowedIds(store.db, [first.id], scope, false), [], 'refs alone are not workspace evidence');
     recordMessageProjects(store.db, file, block.effectiveMessageIds, scope.id);
     await ingest();
+    assert.deepEqual(scopeAllowedIds(store.db, [first.id], scope, false), [], 'stale raw IDs alone never prove a native revision');
+    recordBiliMessageProjects(store.db, file, block.effectiveMessageIds.map(rawId => ({rawId, identityHash: 'a'.repeat(64), projectId: scope.id})), block.effectiveMessageIds.map(rawId => ({rawId, identityHash: 'a'.repeat(64)})));
     assert.deepEqual(scopeAllowedIds(store.db, [first.id], scope, false), [first.id]);
     const watermark = store.db.prepare('SELECT * FROM source_watermarks').get();
     for (const bad of [

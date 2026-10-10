@@ -58,7 +58,7 @@ setup 将上游 `npm:@narumitw/pi-statusline` 替换为本地派生包，避免�
 
 配置、允许列表、索引、向量配置与日志独立位于 `~/.pi/bili-memory/{config.json,sources.jsonl,memory.sqlite,embedding.json,memory.log}`；归档位于 `history/`。正常来源仅为 BC 会话与已注册的迁移归档，旧路径保留作回滚而非并行摄取。BC 会话目录优先 `BILI_SESSIONS_DIR`，否则 `${XDG_DATA_HOME:-~/.local/share}/billion-context/sessions/`。
 
-服务地址与密钥不入库，公开默认关闭 Embedding，setup 不读取/搬迁这些私密数据。首次迁移须另做备份、副本演练与来源审批，不能把初始准备脚本重跑到活跃目标库上。全部旧库数据已补齐的私人验收见[迁移记录](billion-context-migration.md)。启用后搜索可发送脱敏查询，摘要上传须菜单确认或明确启用 `autoBackfill`。详见 [Billion Memory 配置](../packages/bili-memory/README.md)。
+服务地址与密钥不入库，公开默认关闭 Embedding，setup 不读取/搬迁这些私密数据。首次迁移须另做备份、副本演练与来源审批，不能把初始准备脚本重跑到活跃目标库上。全部旧库数据已补齐的私人验收见[迁移记录](billion-context-migration.md)。启用后搜索可发送脱敏查询；摘要后台上传须明确启用 `autoBackfill`。`/bili-memory` 只提供浏览、状态、刷新，不会授予新的上传权限或删除记忆。详见 [Billion Memory 配置](../packages/bili-memory/README.md)。
 
 ## setup 行为
 
@@ -89,7 +89,7 @@ bun run setup --agent-dir /tmp/pi-profile # 预览另一个配置目录
 | 外部 Sakura / 本地 UI 包 | 不再加载；外观通过原生主题与设置调整 |
 | 外部 RPIV Advisor | 源码保留在 `packages/advisor/`，当前禁用 |
 | 外部 pi-billion-memory / 旧 `packages/memory` | `packages/bili-memory/`；数据须显式离线迁移到独立目录 |
-| billion-context-pi（BCP） | billion-context（BC）Pi 原生入口与本地代理；旧实时折叠状态不迁移 |
+| billion-context-pi（旧压缩器） | billion-context（BC）Pi 原生入口与本地代理；setup 仅替换声明，不转换折叠状态。16 个保留会话已通过单独验证的转换迁移，见[迁移记录](billion-context-migration.md) |
 
 根命令 `build:pi`、`build:pi-worker:*`、`smoke:pi`、`benchmark:pi` 继续可用。内部包名 `pi-ssh-remote`、runtime Symbol 与远端缓存命名保留，不因仓库更名而变更协议。
 

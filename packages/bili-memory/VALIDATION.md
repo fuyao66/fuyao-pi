@@ -1,5 +1,78 @@
 # Validation records
 
+## Release acceptance (2026-10-10)
+
+The combined native refactor, `/bili-memory` three-action menu, display-only title
+fallbacks, quiet activity feedback and current BC terminology passed the full root
+check: **140 Bun passes, 1 historical Advisor skip, 0 failures; 101 Node memory
+passes; 139 preserved self-checks**. Typecheck/build, SSH-process-shim smoke and the
+installed BC/Goal isolated native integration all passed. No production database or
+configuration was changed, no real provider/server was called, and no runtime reload
+is implied by this source validation.
+
+## BC-native refactor (2026-10-10; source validation, not production rollout)
+
+BM complements BC's single-session compression with authorized cross-session retrieval.
+The refactor does not change upstream BC, create another proxy, or rebuild the production
+index. Earlier human-readable one-line feedback changes are included, without entering
+model context or triggering continuation.
+
+- Full root check: **139 Bun passes, 1 historical Advisor skip, 0 failures**;
+  preserved upstream self-checks pass; **99 Node memory tests pass**. Typecheck/build
+  and `git diff --check` pass. Fixtures now obey the exact native v3 envelope.
+- `scripts/verify-billion-context.mjs` against installed `billion-context@0.1.189`
+  verifies actual proxy/native Pi compression, Fast priority, Goal continuation and
+  completion, retained-text revisions and delegate→SSH-worker routing. Image and
+  opaque-audio histories return snapshot 409 but still successfully compress/persist;
+  the real collector indexes their complete summaries without assigning a guessed
+  project. HOME/config/dataset and provider are isolated; provider is loopback mock.
+- Regression coverage includes ordered-prefix attribution, temporary persistence gaps,
+  failed evidence writes, overlapping observation/full hash reconciliation, workspace
+  A→B→A invalidation, parser upgrades, full-summary tails, explicit over-budget refusal,
+  metadata-only updates without vector invalidation, content-store file exclusion,
+  authorization-first exact-copy receipts and direct parent/child diversity.
+- Search regressions cover complete-body changes outside the embedding prefix,
+  current/all full-result reauthorization, cancellation during zero-vector scans and
+  source revocation while the second vector gate yields. The latter now reauthorizes
+  one live witness synchronously immediately before query dispatch. Upload revocation
+  after dispatch remains irreversible, as before.
+- Fresh focused independent reviews found and then verified fixes for the collector
+  and retrieval races. Earlier delegates that timed out without final results are not
+  counted as approvals. Embedding tests use mocks; no real-summary uploads or real
+  model-quality evaluation are claimed.
+
+Reproducible synthetic performance probe:
+
+```sh
+node --import tsx scripts/benchmark-bili-memory.mjs
+```
+
+On this machine / Node 24.14.1, with no external requests:
+
+| Operation | Observation |
+| --- | --- |
+| Locator, 33 × 2 MiB sessions, first pass | 69,209,197 bytes read; 170.9 ms |
+| Same locator, three unchanged passes | **0 body bytes read**; 32.3 ms total |
+| Authorized keyword search, 1,000 rows including exact-copy grouping | median 13.6 ms across five runs |
+| 10,000 × 3,072-dimensional semantic search, mocked query, authorization refresh and final validation | 981.6 ms total; 1.3 ms before first await; RSS +26.3 MiB; 311 timer ticks |
+| Synchronous global management status, same 10,000-vector corpus | 361.5 ms |
+
+These are machine-specific observations, not latency guarantees. The older ~494 ms
+probe below omitted today's full authorization/dedup/final-validation workload and
+is not an apples-to-apples speed comparison. Source listing/stat checks still run;
+changed source files still require parsing. Management status and bounded ingestion
+transactions can synchronously pause the UI at large scale. The 10,000 oldest-eligible
+vector window, 6,000-byte embedding prefix, at-most-100 result candidates and nonrecursive
+raw expansion remain explicit limits, not hidden claims of unlimited memory.
+
+Rollout contract: additive metadata/parser tables preserve stable block IDs, tombstones,
+unchanged vectors and immutable history. Native sources refresh per file instead of
+resetting all watermarks; over-budget files retain the previous indexed revision but
+fail current source authorization until a valid revision is available. Any incompatible
+or lossy legacy-data change must be discussed separately. This validation did not
+apply the new schema to production, change local configuration, rebuild real vectors,
+or commit/push the source changes.
+
 ## BC migration and complete-history acceptance (2026-10-10)
 
 Current baseline: Pi 1.1.0, `billion-context@0.1.189`, Node >=22.19. The installed native entry and live local proxy were verified; disk/proxy versions match with no stale/conflicting installation. Advisor is disabled.

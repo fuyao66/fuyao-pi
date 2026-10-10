@@ -14,6 +14,34 @@ export function cleanBody(text: string): string {
     .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "")
     .replace(/\t/g, "    ");
 }
+/** Display-only fallback; never writes a generated title into BC or the index. */
+export function memoryTitle(topic: unknown, summary: unknown, blockId: unknown): string {
+  const bounded = (value: unknown) => {
+    const title = preview(value, 160);
+    return /[\uD800-\uDBFF]$/.test(title) ? title.slice(0, -1) : title;
+  };
+  const explicit = bounded(topic);
+  if (explicit) return explicit;
+  const plain = (line: string) => bounded(line
+    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "")
+    .replace(/\s+#+\s*$/, "")
+    .replace(/!?\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[`*_]/g, ""));
+  // Only a small opening excerpt is needed for list display, never a full read.
+  const lines = cleanBody(String(summary ?? "").slice(0, 4096)).split("\n");
+  let first = "", fence = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) { if (!fence) fence = marker[0]; else if (marker[0] === fence) fence = ""; continue; }
+    if (fence || !line.trim() || /^\s*[-=*_]{3,}\s*$/.test(line)) continue;
+    if (/^\s*#{1,6}\s+/.test(line) || /^\s*(?:={3,}|-{3,})\s*$/.test(lines[i + 1] ?? "")) {
+      const heading = plain(line); if (heading) return heading;
+    }
+    if (!first) first = plain(line);
+  }
+  return first || bounded(blockId) || "Untitled memory";
+}
 /** Bounded list, lazy full-detail lookup. Rendering never reads the database. */
 export class MemoryBrowser {
   private list: SelectList;
@@ -106,7 +134,7 @@ export class MemoryBrowser {
 }
 export async function showMemoryBrowser(ctx: ExtensionContext, rows: BrowserRow[], load: (id: string) => BrowserDetail | undefined,
   current: () => boolean, ownClose: (close?: () => void) => void, title?: string): Promise<void> {
-  if (ctx.mode !== "tui" || !ctx.hasUI) { ctx.ui?.notify?.(`Memory: ${rows.length} recent entries. Open /memory in TUI mode to browse details.`, "info"); return; }
+  if (ctx.mode !== "tui" || !ctx.hasUI) { ctx.ui?.notify?.(`Memory: ${rows.length} recent entries. Open /bili-memory in TUI mode to browse details.`, "info"); return; }
   try {
     await ctx.ui.custom<void>((tui, theme, _kb, done) => {
       ownClose(() => done());

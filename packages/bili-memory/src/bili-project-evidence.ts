@@ -9,7 +9,7 @@ export interface BiliMessageEvidence { rawId: string; identityHash: string; proj
  * even when the proxy is unreachable. Missing snapshots break continuity. */
 export class BiliProjectEvidence {
   private sessionId: string | undefined;
-  private previous = new Map<string, string>();
+  private previous: BiliIdentity['messages'] = [];
   private scopeStamp: string | undefined;
   private continuous = false;
 
@@ -23,24 +23,27 @@ export class BiliProjectEvidence {
   /** Stage a snapshot; the collector adopts it only after persistence succeeds. */
   copy(): BiliProjectEvidence {
     const next = new BiliProjectEvidence();
-    next.sessionId = this.sessionId; next.previous = new Map(this.previous);
+    next.sessionId = this.sessionId; next.previous = this.previous.map(m => ({ ...m }));
     next.scopeStamp = this.scopeStamp; next.continuous = this.continuous;
     return next;
   }
 
   capture(identity: BiliIdentity, scope: ProjectScope): BiliMessageEvidence[] {
     this.observeScope(scope);
-    const next = new Map(identity.messages.map(m => [m.rawId, m.identityHash]));
     const sameSession = this.sessionId === identity.sessionId;
-    // Rewrites/branch changes are not append-only observations. Do not infer
-    // ownership from a new tail when any previous identity has disappeared.
-    const appendOnly = sameSession && [...this.previous].every(([id, hash]) => next.get(id) === hash);
+    // A set-subset test misses reorder/insertion/ref reuse. Only an ordered,
+    // unchanged identity prefix proves that the new tail is this workspace's.
+    const appendOnly = sameSession && this.previous.every((m, i) => {
+      const next = identity.messages[i];
+      return next?.rawId === m.rawId && next.ref === m.ref && next.identityHash === m.identityHash;
+    });
     const project = this.continuous && appendOnly ? scope.id : null;
+    const old = new Map(this.previous.map(m => [m.rawId, m]));
     const evidence = identity.messages
-      .filter(m => !sameSession || this.previous.get(m.rawId) !== m.identityHash)
+      .filter(m => !sameSession || old.get(m.rawId)?.identityHash !== m.identityHash || old.get(m.rawId)?.ref !== m.ref)
       .map(m => ({ rawId: m.rawId, identityHash: m.identityHash, projectId: project }));
     this.sessionId = identity.sessionId;
-    this.previous = next;
+    this.previous = identity.messages.map(m => ({ ...m }));
     this.continuous = true;
     return evidence;
   }

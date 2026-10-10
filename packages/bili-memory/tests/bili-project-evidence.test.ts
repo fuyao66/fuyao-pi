@@ -5,7 +5,7 @@ import type { BiliIdentity } from '../src/bili-identity.js';
 const local = { id: 'local', stamp: 'local:0', label: 'local' };
 const remote = { id: 'remote', stamp: 'remote:1', label: 'remote' };
 function snapshot(ids: string[], sessionId = 'proxy'): BiliIdentity {
-  return { conversationId: 'pi', sessionId, messages: ids.map((id, i) => ({ rawId: id, ref: `m${String(i).padStart(5, '0')}`, identityHash: id.repeat(64).slice(0, 64) })) };
+  return { conversationId: 'pi', sessionId, parentRevision: 'a'.repeat(64), orderHash: 'b'.repeat(64), messages: ids.map((id, i) => ({ rawId: id, ref: `m${String(i).padStart(5, '0')}`, identityHash: id.repeat(64).slice(0, 64) })) };
 }
 
 test('proxy evidence leaves old history unknown and attributes only observed append-only intervals', () => {

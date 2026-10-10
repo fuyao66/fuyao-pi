@@ -9,18 +9,20 @@ export interface ActivityCard {
   outcome?: "completed" | "retry" | "failed";
 }
 export function cardLines(card: ActivityCard, _expanded = false): string[] {
-  const parts = ["Memory"];
-  if (card.summaries) parts.push(`Indexed ${card.summaries} summaries`);
-  if (card.vectors) parts.push(`Saved ${card.vectors} vectors`);
-  if (card.outcome === "retry" || card.state === "backoff") parts.push("Embedding pending; retrying");
-  else if (card.outcome === "failed") parts.push("Embedding failed; please retry");
-  else if (card.state === "resumed" && !card.summaries && !card.vectors) parts.push("Embedding resumed");
-  return [parts.join(" · ")];
+  const memories = (count: number) => `${count} ${count === 1 ? "memory" : "memories"}`;
+  const parts = ["Bili-Memory"];
+  if (card.summaries) parts.push(`Updated ${memories(card.summaries)}`);
+  // Summary commits and embedding commits are independent. Successful vector
+  // backfills/recovery stay silent and never imply measured search improvement.
+  if (card.outcome === "failed") parts.push("Embedding failed; check /bili-memory");
+  else if (card.outcome === "retry" || card.state === "backoff") parts.push("Embedding failed; retrying");
+  return parts.length > 1 ? [parts.join(" · ")] : [];
 }
 export function registerMemoryCards(pi: ExtensionAPI): void {
   pi.registerEntryRenderer<ActivityCard>(MEMORY_CARD, (entry, { expanded }, theme) => {
     if (!entry.data) return undefined;
     const line = cardLines(entry.data, expanded)[0];
+    if (!line) return undefined;
     return { render: (width: number) => [truncateToWidth(theme.fg("dim", line), Math.max(1, width))], invalidate() {} };
   });
 }
@@ -30,6 +32,7 @@ export class ActivityCards {
   private stopped = false;
   private card: ActivityCard = this.empty();
   private lastBackoff = false;
+  private failureNotice?: "retry" | "failed";
   private batch?: ActivityCard;
   constructor(private emit: (card: ActivityCard) => void, private current: () => boolean,
     private sanitize: (text: string) => string = text => text, private delay = 750,
@@ -51,9 +54,17 @@ export class ActivityCards {
     // New summaries collected during HTTP belong to the next batch, not this one.
   }
   private deliver(card: ActivityCard): void {
-    if (!this.stopped && this.current() && (card.summaries || card.vectors || card.state || card.outcome === "failed")) {
-      try { this.emit(card); } catch { /* Rendering must never break indexing. */ }
-    }
+    if (this.stopped || !this.current()) return;
+    const failure = card.outcome === "failed" ? "failed"
+      : card.outcome === "retry" || card.state === "backoff" ? "retry" : undefined;
+    if (!failure && (card.outcome === "completed" || card.state === "resumed")) this.failureNotice = undefined;
+    const repeated = failure !== undefined && failure === this.failureNotice;
+    if (failure) this.failureNotice = failure;
+    // New summary commits still get feedback during backoff, but repeated
+    // failures must not repeat the warning or create empty custom entries.
+    const visible = repeated ? { ...card, outcome: undefined, state: undefined } : card;
+    if (!cardLines(visible).length) return;
+    try { this.emit(visible); } catch { /* Rendering must never break indexing. */ }
   }
   private empty(): ActivityCard { return { summaries: 0, vectors: 0, records: [], at: Date.now() }; }
   saved(type: "summary" | "vector", records: MemoryRecord[], count = records.length, model?: string, dimensions?: number): void {
@@ -98,8 +109,8 @@ export class ActivityCards {
 /** One discoverable entry point; dialogs stay out of model context. */
 export async function memoryMenu(ctx: ExtensionContext, status: string, current: () => boolean): Promise<string | undefined> {
   if (!ctx.hasUI || ctx.mode !== "tui") { ctx.ui?.notify?.(status, "info"); return undefined; }
-  const labels = ["Browse memories", "Session activity", "Vector status", "Rescan sources", "Backfill vectors", "View sources", "Prune old memories"];
-  const selected = await ctx.ui.select(`Memory · Manage\n${status}`, labels);
+  const labels = ["Browse memories", "View status", "Refresh memories"];
+  const selected = await ctx.ui.select(`Bili Memory\n${status}`, labels);
   if (!current()) return undefined;
-  return ["browse", "activity", "embed status", "rescan", "embed backfill", "sources", "prune"][labels.indexOf(selected ?? "")];
+  return ["browse", "status", "rescan"][labels.indexOf(selected ?? "")];
 }

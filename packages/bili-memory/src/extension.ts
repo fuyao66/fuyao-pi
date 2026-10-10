@@ -1,8 +1,8 @@
 /**
  * bili-memory — long-term summary retrieval for Billion Context on Pi
  *
- * Data flow: read allow-listed ACP compression files (+ the pi session header for cwd metadata
- * only) → SQLite shared store → lexical / opt-in embedding RRF memory_search
+ * Data flow: authorized BC v3 summaries / immutable history → stable SQLite index
+ * → source/workspace authorization → distinct lexical / opt-in hybrid memory_search
  *
  * Runtime sources: Billion Context v3 persisted sessions and Memory-owned immutable
  * history archives. Legacy parsers are restricted to explicit offline conversion.
@@ -21,12 +21,12 @@
  * redacted, path-stripped queries to an embedding service; summary uploads use explicit backfill
  * or opt-in automatic background backfill after summary scans.
  *
- * Event strategy: never hooks context events (that is ACP's domain);
- * session_start → background allow-list scan (async fs I/O, does not block session start;
- *   disable via scanOnStartup);
- * agent_settled → incremental scan of the current pi session; session_shutdown → final scan and
- *   DB close; memory_search runs a light allow-list scan first so results always include the
- *   latest compressions. cwd resolution is lazy (header read only when a source is (re)parsed).
+ * Event strategy: no compression context hooks (BC owns the model-view transform).
+ * Startup/settled/search provide fallback scans; successful compress schedules bounded
+ * persistence follow-ups. Ordinary message_end observes attribution only. Native ingestion
+ * needs exact status/session identity; ownership separately needs a fork-safe snapshot.
+ * Shutdown aborts native collection and embeddings, then closes the index. Legacy header
+ * readers/final scans remain offline-only; no latest-file or current-cwd relabelling.
  *
  * Durability: ingestion watermarks live in source_watermarks (survives prune); prune() records a
  * block_tombstones row per deleted block so a later source-file change cannot resurrect it.
@@ -35,7 +35,7 @@
  * logged without the value.
  *
  * Derived from pi-billion-memory 0.5.3; see ../UPSTREAM.md for attribution and fork contract.
- * Loaded from source through fuyao-pi's root manifest; requires Node >=22.19.
+ * Loaded through this package's Pi manifest; requires Node >=22.19.
  * Embedding config: ~/.pi/bili-memory/embedding.json (disabled by default).
  * Config: ~/.pi/bili-memory/config.json (optional; see loadConfig defaults below).
  * Allow-list: ~/.pi/bili-memory/sources.jsonl (defaults to proxy sessions + history).
@@ -49,9 +49,12 @@ import { expandBlock, isSyntheticRef, parseMsgIds } from "./expand.js";
 import { expandBiliBlock } from './bili-expand.js';
 import { hash, loadEmbeddingConfig } from "./embeddings.js";
 import { HybridMemory, ensureVectorSchema } from "./hybrid.js";
-import { realSourcePath, readSourceFile } from './source-files.js';
+import { realSourcePath, readSourceFile, sourceStamp } from './source-files.js';
+import { foreignBiliFile, nativeSessionId, BiliSessionLocator } from './bili-identity.js';
+import { completeSummary, ensureNativeSchema, saveNativeMetadata, NATIVE_PARSER_VERSION, DEFAULT_SOURCE_BYTES, DEFAULT_SUMMARY_BYTES } from './native-storage.js';
 import { summaryPage } from './summary-read.js';
 import { summarySnippet } from './snippets.js';
+import { CANDIDATE_LIMIT, distinctRows, authorizedGroups, members } from './retrieval.js';
 import { SourceCache } from './source-cache.js';
 import { BiliCollector } from './bili-collector.js';
 import { memoryPaths, proxySessionsDir } from './paths.js';
@@ -60,9 +63,9 @@ import { AutoEmbed } from "./auto-embed.js";
 import { CompressionScan } from "./compression-scan.js";
 import { SourcePolicy, sourceKey, sqlAuthorization, type SourceDocument } from "./source-policy.js";
 import { ensureProjectSchema, recordMessageProjects, recordBiliMessageProjects, assignBlockProjects, readProjectScope, scopeAllowedIds, scopeDirectoryHintIds, recordWorkspaceInterval } from "./project-scope.js";
-import { ActivityFeed, preview, type MemoryRecord } from "./activity.js";
+import { preview, type MemoryRecord } from "./activity.js";
 import { ActivityCards, MEMORY_CARD, memoryMenu, registerMemoryCards } from "./memory-ui.js";
-import { cleanBody, showMemoryBrowser, type BrowserRow } from "./memory-browser.js";
+import { cleanBody, memoryTitle, showMemoryBrowser, type BrowserRow } from "./memory-browser.js";
 
 // ---------------------------------------------------------------------------
 // Constants / config / logging
@@ -79,8 +82,10 @@ let legacyOffline = false;
 const DEFAULT_CFG = {
   /** Memory-owned SQLite store, separate from upstream proxy state. */
   dbPath: paths.database,
-  /** Max summary chars stored per block; longer ones are truncated to keep the store small */
+  /** Legacy offline import only. Native summaries are complete or explicitly rejected. */
   maxSummaryChars: 20000,
+  maxSourceReadBytes: DEFAULT_SOURCE_BYTES,
+  maxStoredSummaryBytes: DEFAULT_SUMMARY_BYTES,
   /** Debug logging */
   debug: false,
   /** Directory names to skip inside pi-sidecar source roots (e.g. encoded private project dirs) */
@@ -130,6 +135,9 @@ export function sanitizeCfg(over) {
   if (typeof over.dbPath === "string" && over.dbPath) out.dbPath = expandHome(over.dbPath);
   if (typeof over.maxSummaryChars === "number" && Number.isFinite(over.maxSummaryChars) && over.maxSummaryChars > 0) {
     out.maxSummaryChars = Math.floor(over.maxSummaryChars);
+  }
+  for (const key of ['maxSourceReadBytes', 'maxStoredSummaryBytes']) {
+    if (Number.isSafeInteger(over[key]) && over[key] > 0) out[key] = Math.min(over[key], key === 'maxSourceReadBytes' ? 128 * 1024 * 1024 : 4 * 1024 * 1024);
   }
   if (typeof over.debug === "boolean") out.debug = over.debug;
   if (Array.isArray(over.excludeDirs)) out.excludeDirs = over.excludeDirs.filter((x) => typeof x === "string");
@@ -531,15 +539,16 @@ export async function listSourceFiles(source) {
     try {
       const entries = await fs.promises.readdir(start, { withFileTypes: true });
       const matched = entries
-        .filter((ent) => ent.isFile() && re.test(ent.name))
+        .filter((ent) => ent.isFile() && re.test(ent.name) && (source.adapter !== 'bili-session' || !foreignBiliFile(ent.name)))
         .map((ent) => path.join(start, ent.name));
+      const complete = matched.length <= MAX_SCAN_FILES;
       if (matched.length > MAX_SCAN_FILES) {
         logLine(
           `scan: source '${source.id}' has ${matched.length} matching files; only the first ${MAX_SCAN_FILES} are considered`,
         );
         matched.length = MAX_SCAN_FILES;
       }
-      return { files: matched, errors };
+      return { files: matched, errors, complete };
     } catch (e) {
       errors.push(e);
       return { files: [], errors };
@@ -547,7 +556,7 @@ export async function listSourceFiles(source) {
   }
   const re = globToRegExp([...segs, filePattern].join("/"));
   const budget = { visitedLeft: MAX_SCAN_ENTRIES, matchedLeft: MAX_SCAN_FILES, hitVisited: false, hitMatched: false };
-  const files = await walkGlob(start, re, budget, errors);
+  const files = (await walkGlob(start, re, budget, errors)).filter(file => source.adapter !== 'bili-session' || !foreignBiliFile(file));
   if (budget.hitVisited || budget.hitMatched) {
     logLine(
       `scan: source '${source.id}' hit the ${
@@ -555,7 +564,7 @@ export async function listSourceFiles(source) {
       } cap; the rest was skipped (check that the allow-list root points at a session directory, not at a whole home directory)`,
     );
   }
-  return { files, errors };
+  return { files, errors, complete: !budget.hitVisited && !budget.hitMatched && !errors.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -686,9 +695,7 @@ function biliHost(sourceFile) {
 function normalizeBiliBlocks(data: any) {
   const blocks = data?.payload?.state?.blocks;
   // Fail closed on a new persistence version instead of silently indexing a changed contract.
-  if (data?.version !== 3 || (data.payload?.version !== undefined && data.payload.version !== 3) ||
-      typeof data.id !== 'string' || !data.id ||
-      (data.payload?.id !== undefined && data.payload.id !== data.id) || !Array.isArray(blocks)) return null;
+  if (!nativeSessionId(data)) return null;
   const out: any[] = [];
   for (const b of blocks) {
     if (!b || (typeof b.blockId !== "string" && typeof b.blockId !== "number") || typeof b.summary !== "string")
@@ -704,6 +711,9 @@ function normalizeBiliBlocks(data: any) {
       refEnd: typeof b.endRef === "string" ? b.endRef : null,
       compressedTokens: toInt(b.compressedTokens),
       createdAt: toInt(b.createdAt),
+      active: typeof b.active === 'boolean' ? b.active : null,
+      directBlockIds: Array.isArray(b.directBlockIds) && b.directBlockIds.length <= MAX_MSG_IDS &&
+        b.directBlockIds.every(id => typeof id === 'string') ? [...new Set(b.directBlockIds)] : null,
     });
   }
   return out;
@@ -828,6 +838,7 @@ export class MemoryDb {
       logLine("migrated blocks.msg_ids; watermark ledger reset once for pointer backfill");
     }
     ensureProjectSchema(this.db);
+    ensureNativeSchema(this.db);
     // Install vector invalidation before the startup scan, even before HybridMemory
     // is constructed; existing vector tables must not retain revised content.
     if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_vectors'").get()) ensureVectorSchema(this);
@@ -930,7 +941,11 @@ export class MemoryDb {
     }
     let cwd = typeof meta?.cwd === "string" && meta.cwd ? meta.cwd : null;
     let project = typeof meta?.project === "string" && meta.project ? meta.project : null;
-    if (!force) {
+    const stamp = sourceStamp(st);
+    if (meta.expectedStamp && meta.expectedStamp !== stamp) return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs, size, error: 'Source identity changed' };
+    const native = kind === 'bili' ? this.db.prepare('SELECT source_stamp,parser_version FROM memory_native_sources WHERE source_file=?').get(sourceFile) : null;
+    const nativeFresh = kind !== 'bili' || (native?.source_stamp === stamp && native?.parser_version === NATIVE_PARSER_VERSION);
+    if (!force && nativeFresh) {
       // The ledger, not the sources row, owns the watermark: prune() may drop sources rows
       // without losing the "already ingested" state.
       const prev = this.db
@@ -964,11 +979,12 @@ export class MemoryDb {
     }
     let data;
     try {
-      const read = await readSourceFile(sourceFile);
-      if (read.stat.mtimeMs !== mtimeMs || read.stat.size !== size) throw new Error('Source changed during ingestion');
+      const read = await readSourceFile(sourceFile, cfg.maxSourceReadBytes);
+      if (sourceStamp(read.stat) !== stamp) throw new Error('Source changed during ingestion');
       if (kind === 'history' && !historyMatches(read.body, historyRegistration(this.db, sourceFile)))
         throw new Error('Unregistered or modified history archive');
       data = JSON.parse(read.body);
+      if (kind === 'bili' && meta.expectedSessionId && nativeSessionId(data) !== meta.expectedSessionId) throw new Error('Unexpected source session identity');
     } catch (e) {
       // Possibly mid-write by another process: leave watermark untouched, retry next scan
       return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs, size, error: `parse: ${e.message}` };
@@ -978,7 +994,7 @@ export class MemoryDb {
       cwd = data.origin.cwd;
       project = data.origin.project;
     }
-    const blocks =
+    let blocks =
       kind === 'history' ? normalizeHistoryBlocks(data) : kind === "pi"
         ? normalizePiBlocks(data)
         : kind === "bili"
@@ -996,6 +1012,16 @@ export class MemoryDb {
         error: "unrecognized source format",
       };
     }
+    if (kind === 'bili') {
+      try {
+        // Validate every block before starting the transaction: an over-budget
+        // revision never becomes a silent prefix or advances the source watermark.
+        blocks = blocks.map(b => ({ ...b, summary: completeSummary(redactSecrets(b.summary).text, cfg.maxStoredSummaryBytes) }));
+      } catch (error) {
+        return { ok: false, parsed: true, total: blocks.length, inserted: 0, mtimeMs, size, error: error.message };
+      }
+    }
+    if (meta.authorize && !await meta.authorize()) return { ok: false, parsed: false, total: 0, inserted: 0, mtimeMs, size, error: 'Source permission expired' };
     if (this.closed || !current()) {
       // The session ended while this file was being read: the connection is gone, and a closed
       // store must not be reopened behind the user's back. Report a plain failure instead of a
@@ -1048,11 +1074,11 @@ export class MemoryDb {
         if (!b || typeof b.summary !== "string") continue;
         // Registered archives contain previously sanitized, hash-verified data.
         // Display/embedding limits must not truncate the stored historical revision.
-        const redactedSummary = kind === 'history' ? { text: b.summary, hits: 0 } : redactSecrets(b.summary);
+        const redactedSummary = kind === 'history' || kind === 'bili' ? { text: b.summary, hits: 0 } : redactSecrets(b.summary);
         const redactedTopic = kind === 'history' ? { text: b.topic, hits: 0 } : typeof b.topic === "string" && b.topic ? redactSecrets(b.topic) : { text: null, hits: 0 };
         redactedHits += redactedSummary.hits + redactedTopic.hits;
         const summary =
-          kind !== 'history' && redactedSummary.text.length > cfg.maxSummaryChars
+          kind !== 'history' && kind !== 'bili' && redactedSummary.text.length > cfg.maxSummaryChars
             ? redactedSummary.text.slice(0, cfg.maxSummaryChars)
             : redactedSummary.text;
         if (!summary.trim()) continue;
@@ -1075,12 +1101,20 @@ export class MemoryDb {
         );
         const values = [kind, b.runId, b.tier, redactedTopic.text, summary, b.refStart, b.refEnd, b.compressedTokens, b.createdAt, msgIdsJson];
         const changed = r.changes > 0 ? 0 : update.run(...values, sourceFile, b.blockId, ...values, sourceFile, b.blockId).changes;
+        if (kind === 'bili') {
+          const row = this.db.prepare('SELECT id FROM blocks WHERE source_file=? AND block_id=?').get(sourceFile, b.blockId);
+          if (row) saveNativeMetadata(this.db, row.id, data.id, b, summary);
+        }
         if (r.changes > 0) inserted++;
         if (changed > 0) refreshed++;
         if (r.changes > 0 || changed > 0) {
           if (savedRecords.length >= 80) savedRecords.shift();
           savedRecords.push({ identity: hash(JSON.stringify([sourceFile, kind, b.blockId])), blockId: b.blockId, project, topic: redactedTopic.text, summary });
         }
+      }
+      if (kind === 'bili') {
+        this.db.prepare('DELETE FROM memory_bili_block_coverage WHERE block_id IN (SELECT id FROM blocks WHERE source_file=?)').run(sourceFile);
+        this.db.prepare('INSERT OR REPLACE INTO memory_native_sources VALUES(?,?,?)').run(sourceFile, stamp, NATIVE_PARSER_VERSION);
       }
       assignBlockProjects(this.db, sourceFile);
       this.db.exec("COMMIT");
@@ -1158,7 +1192,7 @@ export class MemoryDb {
   _buildSearch(query, opts: any = {}) {
     const limit = Math.max(
       1,
-      Math.min(MAX_RESULT_LIMIT, Number.isInteger(opts.limit) ? opts.limit : DEFAULT_RESULT_LIMIT),
+      Math.min(opts.candidates ? CANDIDATE_LIMIT : MAX_RESULT_LIMIT, Number.isInteger(opts.limit) ? opts.limit : DEFAULT_RESULT_LIMIT),
     );
     const project = opts.project || null;
     const tokens = String(query || "")
@@ -1193,9 +1227,9 @@ export class MemoryDb {
     if (opts.policySql) where += ` AND ${opts.policySql}`;
     params.push(limit);
     const mode = useFts ? (likeTokens.length ? "mixed" : "fts") : "like";
-    const from = useFts
+    const from = (useFts
       ? "FROM blocks_fts JOIN blocks b ON b.id = blocks_fts.rowid JOIN sources s ON s.source_file = b.source_file"
-      : "FROM blocks b JOIN sources s ON s.source_file = b.source_file";
+      : "FROM blocks b JOIN sources s ON s.source_file = b.source_file") + ' LEFT JOIN memory_native_metadata n ON n.block_id=b.id';
     const rank = useFts ? "bm25(blocks_fts)" : "NULL";
     // Pure LIKE keeps ORDER BY created_at only so idx_blocks_created satisfies the ordering.
     const order = useFts ? "ORDER BY bm25(blocks_fts), b.created_at DESC, b.id DESC" : "ORDER BY b.created_at DESC";
@@ -1204,7 +1238,7 @@ export class MemoryDb {
              b.block_id AS blockId, b.tier, b.topic,
              b.ref_start AS refStart, b.ref_end AS refEnd,
              b.compressed_tokens AS tokens, b.created_at AS createdAt,
-             b.summary, s.project, s.cwd,
+             b.summary, s.project, s.cwd, n.session_id AS sessionId, n.active, n.direct_block_ids AS directBlockIds,
              ${rank} AS rank
       ${from}
       WHERE ${where}
@@ -1222,7 +1256,8 @@ export class MemoryDb {
   search(query, opts: any = {}) {
     this.open();
     const policy = sqlAuthorization(this.db, opts.allowedIds, opts.authorizedRows);
-    const built = this._buildSearch(query, { ...opts, policySql: policy.sql });
+    const limit = Math.max(1, Math.min(opts.candidates ? CANDIDATE_LIMIT : MAX_RESULT_LIMIT, opts.limit ?? DEFAULT_RESULT_LIMIT));
+    const built = this._buildSearch(query, { ...opts, candidates: true, limit: CANDIDATE_LIMIT, policySql: policy.sql });
     let rows = [];
     try {
       if (built.mode === "empty") return { mode: "empty", rows: [] };
@@ -1231,7 +1266,7 @@ export class MemoryDb {
       logLine(`search error: ${withoutPaths(e.message)} | sql=${built.sql}`);
       rows = [];
     } finally { policy.dispose(); }
-    return { mode: built.mode, rows };
+    return { mode: built.mode, rows: distinctRows(rows, limit) };
   }
 
   /** EXPLAIN QUERY PLAN for the same SQL as search(); used by tests to lock the LIKE plan. */
@@ -1272,7 +1307,7 @@ export class MemoryDb {
   /**
    * Scale governance: delete blocks whose created_at is older than keepDays days (fts rows go
    * through the delete trigger), drop source rows left without blocks, then VACUUM.
-   * Blocks without created_at (legacy data) are kept. Low-frequency manual op (/memory prune <days>),
+   * Blocks without created_at (legacy data) are kept. Explicit offline maintenance operation,
    * the caller confirms.
    * @param {number} keepDays retention in days; 0 = delete every timestamped block
    * @returns {{removedBlocks:number, removedSources:number, removedSessions:number, remainingBlocks:number}}
@@ -1600,7 +1635,14 @@ async function scanOneSource(source, d, force, resolvePiCwd, generation, tally) 
       tally.failed++;
       continue;
     }
-    const r = await d.ingestSourceFile(file, meta, force, source.adapter === "pi-sidecar" ? resolvePiCwd : null);
+    const valid = () => generation === sessionGeneration && !dbClosed && !d.closed;
+    meta.authorize = async () => {
+      for (const enabled of await loadSources()) if (enabled.enabled && enabled.adapter === source.adapter) {
+        if ((await listSourceFiles(enabled)).files.includes(file)) return valid();
+      }
+      return false;
+    };
+    const r = await d.ingestSourceFile(file, meta, force, source.adapter === "pi-sidecar" ? resolvePiCwd : null, valid);
     if (r.parsed) tally.scanned++;
     if (!r.ok && r.error && r.error !== "no source file") {
       tally.failed++;
@@ -1649,13 +1691,13 @@ export async function buildSourcePolicy(): Promise<SourcePolicy> {
       if (kind === 'history' && registration?.enabled !== 1) { unavailable.delete(key); continue; }
       if (documents.has(key)) continue;
       try {
-        documents.set(key, await policyDocuments.read(key + ':' + cfg.maxSummaryChars + ':' + (registration?.sha256 ?? ''), file, (data, body) => {
+        documents.set(key, await policyDocuments.read(key + ':' + cfg.maxSummaryChars + ':' + cfg.maxStoredSummaryBytes + ':' + (registration?.sha256 ?? ''), file, (data, body) => {
           if (kind === 'history' && !historyMatches(body, registration)) return { state: 'missing/unreadable' };
           const parsed = kind === 'history' ? normalizeHistoryBlocks(data) : kind === 'pi' ? normalizePiBlocks(data) : kind === 'opencode' ? normalizeOpencodeBlocks(data) : normalizeBiliBlocks(data);
           if (!parsed) return { state: 'missing/unreadable' };
           const blocks = new Map();
           for (const b of parsed) {
-            const summary = kind === 'history' ? b.summary : redactSecrets(b.summary).text.slice(0, cfg.maxSummaryChars);
+            const summary = kind === 'history' ? b.summary : kind === 'bili' ? completeSummary(redactSecrets(b.summary).text, cfg.maxStoredSummaryBytes) : redactSecrets(b.summary).text.slice(0, cfg.maxSummaryChars);
             if (!summary.trim()) continue;
             blocks.set(b.blockId, { blockId: b.blockId, summary,
               topic: kind === 'history' ? b.topic : b.topic ? redactSecrets(b.topic).text : null,
@@ -1663,7 +1705,7 @@ export async function buildSourcePolicy(): Promise<SourcePolicy> {
               refStart: b.refStart, refEnd: b.refEnd });
           }
           return { state: 'loaded', blocks };
-        }));
+        }, cfg.maxSourceReadBytes));
       } catch { documents.set(key, { state: 'missing/unreadable' }); }
       if (generation !== sessionGeneration || dbClosed) throw new Error('Memory policy session expired');
     }
@@ -1729,12 +1771,13 @@ export function formatResults(res, query = '') {
     const tm = fmtTs(r.createdAt);
     const refs = r.refStart ? ` [${r.refStart}${r.refEnd && r.refEnd !== r.refStart ? "–" + r.refEnd : ""}]` : "";
     const topic = r.topic ? `Topic: ${r.topic}\n` : "";
+    const alternatives = r.alternatives?.length ? `Other authorized sources: ${r.alternatives.map(a => `${sourceLabel(a)} ${a.blockId}`).join('; ')}\n` : '';
     let summary = summarySnippet(r.summary || '', query, PREVIEW_CHARS);
     summary = summary.replace(/\n{3,}/g, "\n\n").trim();
     return (
       `[${i + 1}] project ${project} · ${tm || "time unknown"} · ${r.blockId || ""}` +
       ` · tier${r.tier ?? "?"} · ${fmtTokens(r.tokens) || "?"} tokens compressed${refs}\n` +
-      `Source: ${sourceLabel(r)}\n` +
+      `Source: ${sourceLabel(r)}\n` + alternatives +
       `${r.scopeBasis === 'session-directory' ? 'Attribution: session-directory clue only (keyword fallback); actual workspace may differ.\n' : r.crossWorkspace ? 'Attribution: cross-workspace summary; contains history from multiple projects.\n' : r.partialProject ? 'Attribution: this project is evidenced for part of the summary; remaining messages are unassigned.\n' : ''}${topic}${summary}`
     );
   });
@@ -1913,7 +1956,6 @@ export default async function factory(pi: ExtensionAPI) {
   let cards: ActivityCards | null = null;
   let closeBrowser: (() => void) | undefined;
   const sanitizeDisplay = (text: string) => withoutPaths(redactSecrets(text).text);
-  const feed = new ActivityFeed(80, sanitizeDisplay);
   registerMemoryCards(pi);
   const automatic = embeddingConfig.enabled && embeddingConfig.autoBackfill &&
     !(Number(process.env.PI_ACP_DELEGATE_DEPTH ?? "0") > 0);
@@ -1950,7 +1992,6 @@ export default async function factory(pi: ExtensionAPI) {
       hybrid = new HybridMemory(store, embeddingConfig, (text) => withoutPaths(redactSecrets(text).text),
         undefined, () => generation === sessionGeneration && !dbClosed, (records) => {
           if (generation !== sessionGeneration || dbClosed) return;
-          for (const record of records) feed.add({ ...record, type: "vector", model: sanitizeDisplay(embeddingConfig.model), dimensions: embeddingConfig.dimensions });
           cards?.saved("vector", records, records.length, embeddingConfig.model, embeddingConfig.dimensions);
         });
     }
@@ -1982,7 +2023,7 @@ export default async function factory(pi: ExtensionAPI) {
     const sessionFile = ctx.sessionManager?.getSessionFile?.() ?? null;
     stopEmbedding();
     closeBrowser?.(); closeBrowser = undefined;
-    cards?.stop(); cards = null; feed.clear();
+    cards?.stop(); cards = null;
     dbClosed = false; // a new session may reuse this extension instance after a shutdown
     const generation = ++sessionGeneration;
     seenMessages = new Set((ctx.sessionManager?.getEntries?.() ?? []).filter((e: any) => e.type === 'message').map((e: any) => e.id));
@@ -1997,7 +2038,6 @@ export default async function factory(pi: ExtensionAPI) {
     if (conversation) recordWorkspaceInterval(store.db, conversation, observedScope, Date.now(), true);
     store.onStored = (records, count) => {
       if (generation !== sessionGeneration || dbClosed) return;
-      for (const record of records) feed.add({ ...record, topic: withoutPaths(redactSecrets(record.topic ?? "").text), summary: withoutPaths(redactSecrets(record.summary ?? "").text), type: "summary" });
       cards?.saved("summary", records, count);
     };
     // Native collection requires a persistent Pi conversation identity. Missing
@@ -2005,22 +2045,29 @@ export default async function factory(pi: ExtensionAPI) {
     const conversationId = ctx.sessionManager?.getSessionId?.();
     if (conversationId) biliCollector = new BiliCollector({
       conversationId, origin: () => process.env.BILLION_CONTEXT_PROXY,
+      locator: new BiliSessionLocator(1024, cfg.maxSourceReadBytes, 128 * 1024 * 1024),
       scope: () => readProjectScope(pi, ctx.cwd), current: () => generation === sessionGeneration && !dbClosed,
       files: async () => {
-        const files: string[] = [];
+        const files: string[] = []; let complete = true;
         for (const source of await loadSources()) if (source.enabled && source.adapter === 'bili-session') {
-          files.push(...(await listSourceFiles(source)).files);
+          const listed = await listSourceFiles(source);
+          files.push(...listed.files); complete &&= listed.complete !== false && !listed.errors.length;
         }
-        return [...new Set(files)];
+        return { files: [...new Set(files)], complete };
       },
-      ingest: async file => {
-        const valid = () => generation === sessionGeneration && !dbClosed;
+      ingest: async (file, sessionId, stamp, valid) => {
+        const authorize = async () => {
+          for (const source of await loadSources()) if (source.enabled && source.adapter === 'bili-session') {
+            if ((await listSourceFiles(source)).files.includes(file)) return valid();
+          }
+          return false;
+        };
         if (!valid()) return false;
-        return (await store.ingestSourceFile(file, { kind: 'bili' }, false, null, valid)).ok;
+        return (await store.ingestSourceFile(file, { kind: 'bili', expectedSessionId: sessionId, expectedStamp: stamp, authorize }, false, null, valid)).ok;
       },
-      saveEvidence: (file, rows) => {
+      saveEvidence: (file, rows, identity) => {
         if (generation !== sessionGeneration || dbClosed) return;
-        recordBiliMessageProjects(store.db, file, rows);
+        recordBiliMessageProjects(store.db, file, rows, identity.messages);
       },
     });
     compressionScan = new CompressionScan(async () => {
@@ -2067,7 +2114,11 @@ export default async function factory(pi: ExtensionAPI) {
     });
   });
 
-  pi.on("message_end", (_event, ctx) => { observeMessages(ctx); if (biliCollector) compressionScan?.trigger(); });
+  pi.on("message_end", (_event, ctx) => {
+    observeMessages(ctx);
+    // Ordinary messages update ownership observations only; no persistence scan.
+    void biliCollector?.observe().catch(() => logLine('memory ownership observation unavailable'));
+  });
   pi.on("tool_execution_end", (event, ctx) => {
     observeMessages(ctx);
     if (event.toolName === "compress" && !event.isError) compressionScan?.trigger();
@@ -2176,26 +2227,33 @@ export default async function factory(pi: ExtensionAPI) {
           : getDb().search(query, { project, limit, allowedIds, authorizedRows });
         if (generation !== sessionGeneration || dbClosed) throw new Error("Memory search session expired");
         if (readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp) throw new Error('Memory workspace changed during search');
-        // Exact associations rank first; directory clues use keyword-only fallback.
-        if (!all && res.mode !== 'cancelled') {
+        // Always reauthorize every receipt after asynchronous retrieval, including
+        // full result sets and explicit all-scope searches. Directory-clue filling
+        // must never be the condition deciding whether final authorization runs.
+        if (res.mode !== 'cancelled') {
           const max = Math.max(1, Math.min(MAX_RESULT_LIMIT, limit));
-          if (res.rows.length < max) {
-            const policy = await buildSourcePolicy();
-            if (_signal?.aborted) return { content: [{ type: 'text', text: 'Memory search cancelled.' }], details: { mode: 'cancelled', hits: 0 } };
-            if (generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp)
-              throw new Error('Memory workspace changed during search');
-            const store = getDb();
-            const exactIds = new Set(scopeAllowedIds(store.db, policy.allowedIds, scope, false));
-            res.rows = res.rows.filter(row => exactIds.has(row.id) && policy.authorizedRows.some(current =>
-              current.id === row.id && current.sourceFile === row.sourceFile && current.blockId === row.blockId && current.summary === row.summary));
+          const policy = await buildSourcePolicy();
+          if (_signal?.aborted) return { content: [{ type: 'text', text: 'Memory search cancelled.' }], details: { mode: 'cancelled', hits: 0 } };
+          if (generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp)
+            throw new Error('Memory workspace changed during search');
+          const store = getDb();
+          const exactIds = new Set(scopeAllowedIds(store.db, policy.allowedIds, scope, all));
+          const revisions = new Map(policy.authorizedRows.map(row => [row.id, row]));
+          res.rows = authorizedGroups(res.rows, row => {
+            const current = revisions.get(row.id);
+            return exactIds.has(row.id) && current?.sourceFile === row.sourceFile &&
+              current.blockId === row.blockId && current.summary === row.summary && current.topic === row.topic;
+          }, max);
+          // Exact associations rank first; directory clues use keyword-only fallback.
+          if (!all && res.rows.length < max) {
             const hints = scopeDirectoryHintIds(store.db, policy.allowedIds, scope).filter(id => !exactIds.has(id));
             const extra = store.search(query, { project, limit: max - res.rows.length,
               allowedIds: hints, authorizedRows: policy.authorizedRows });
-            res.rows.push(...extra.rows.map(row => ({ ...row, scopeBasis: 'session-directory' })));
+            res.rows = distinctRows([...res.rows, ...extra.rows.map(row => ({ ...row, scopeBasis: 'session-directory' }))], max);
           }
-          for (const row of res.rows) if (row.scopeBasis !== 'session-directory') {
-            row.crossWorkspace = getDb().db.prepare("SELECT count(*) n FROM memory_block_project_links WHERE block_id=? AND basis='messages'").get(row.id).n > 1;
-            row.partialProject = getDb().db.prepare('SELECT state FROM memory_block_projects WHERE block_id=?').get(row.id)?.state === 'unknown';
+          if (!all) for (const row of res.rows) if (row.scopeBasis !== 'session-directory') {
+            row.crossWorkspace = store.db.prepare("SELECT count(*) n FROM memory_block_project_links WHERE block_id=? AND basis='messages'").get(row.id).n > 1;
+            row.partialProject = store.db.prepare('SELECT state FROM memory_block_projects WHERE block_id=?').get(row.id)?.state === 'unknown';
           }
         }
         if (_signal?.aborted || res.mode === 'cancelled') return { content: [{ type: 'text', text: 'Memory search cancelled.' }], details: { mode: 'cancelled', hits: 0 } };
@@ -2321,7 +2379,7 @@ export default async function factory(pi: ExtensionAPI) {
               mode: p.mode, select: p.select, revision: p.revision, signal: _signal,
               maxReadBytes: cfg.expandMaxReadBytes, maxChars: Math.min(cfg.expandMaxChars, p.chars ?? cfg.expandMaxChars),
               maxMessages: Math.min(cfg.expandMaxMessages, p.limit ?? cfg.expandMaxMessages), redact: redactSecrets,
-              normalizeSummary: text => redactSecrets(text).text.slice(0, cfg.maxSummaryChars) });
+              normalizeSummary: text => completeSummary(redactSecrets(text).text, cfg.maxStoredSummaryBytes) });
             const finalPolicy = await buildSourcePolicy();
             if (_signal?.aborted || generation !== sessionGeneration || dbClosed || readProjectScope(pi, _ctx.cwd).stamp !== scope.stamp ||
                 ![...scopeAllowedIds(db.db, finalPolicy.allowedIds, scope, all), ...(!all ? scopeDirectoryHintIds(db.db, finalPolicy.allowedIds, scope) : [])].includes(row.id) || !finalPolicy.allows(row))
@@ -2349,7 +2407,7 @@ export default async function factory(pi: ExtensionAPI) {
                   type: "text",
                   text:
                     `memory_expand: block ${row.blockId} has no recorded message references, so it cannot be expanded. ` +
-                    "This happens for rows ingested before 0.5.0. Open /memory and choose Rescan sources to refresh references.",
+                    "For legacy references, refresh memories through /bili-memory. Missing references may still be unavailable.",
                 },
               ],
               details: { mode: "no-refs", hits: 1 },
@@ -2400,138 +2458,63 @@ export default async function factory(pi: ExtensionAPI) {
     });
   }
 
-  const runMemoryAction = async (want: string, ctx: any, current: () => boolean) => {
-        if (want === "browse" || want === "activity") {
-          const ownClose = (close?: () => void) => { if (current()) closeBrowser = close; else close?.(); };
-          if (want === "activity") {
-            const events = feed.recent(80);
-            const rows: BrowserRow[] = events.map((event, index) => ({ id: String(index), title: event.topic || event.blockId,
-              project: event.project || "Uncategorized", blockId: event.blockId, date: new Date(event.at).toLocaleTimeString("en-GB"),
-              vector: event.type === "vector" ? "Vector saved" : "Summary indexed" }));
-            await showMemoryBrowser(ctx, rows, id => { const i = Number(id); return rows[i] ? { ...rows[i], summary: `${events[i].summary || "No preview available"}\n\n(Session activity preview. Browse saved memories for the full text.)` } : undefined; }, current, ownClose, "Session activity");
-          } else {
-            const policy = await buildSourcePolicy();
-            if (!current()) return;
-            const query = `SELECT b.id,b.block_id AS blockId,b.topic,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file`;
-            const describe = (r): BrowserRow => ({ id: String(r.id), title: preview(sanitizeDisplay(r.topic || r.blockId), 160),
-              project: preview(sanitizeDisplay(r.project ?? "Uncategorized"), 60), blockId: preview(sanitizeDisplay(r.blockId), 60),
-              date: Number.isFinite(r.createdAt) ? new Date(r.createdAt).toLocaleDateString("en-GB") : "Unknown date",
-              vector: embeddingConfig.enabled ? ({ missing: "Pending embedding", stale: "Needs update", ready: "Vector ready", truncated: "Vector ready (prefix)" }[getHybrid().vectorState(r.id)]) : "Embedding off" });
-            const rows = getDb().db.prepare(`${query} ORDER BY b.id DESC LIMIT 50`).all().map(describe);
-            await showMemoryBrowser(ctx, rows, id => {
-              if (!current()) return undefined;
-              const row = getDb().db.prepare(`SELECT b.id,b.block_id AS blockId,b.topic,b.summary,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file WHERE b.id=?`).get(Number(id));
-              const project = getDb().db.prepare('SELECT state FROM memory_block_projects WHERE block_id=?').get(Number(id));
-              return row ? { ...describe(row), summary: `Source policy: ${policy.state(row.id)} (snapshot at open)\nProject attribution: ${project?.state ?? 'unknown'}\n\n` + cleanBody(sanitizeDisplay(row.summary)) } : undefined;
-            }, current, ownClose);
-          }
-          return;
-        }
-        if (want.startsWith("embed")) {
-          if (want === "embed status") {
-            const status = getHybrid().status();
-            ctx.ui?.notify?.(`Embedding ${embeddingConfig.enabled ? "enabled" : "disabled"}: ${embeddingConfig.model}; indexed ${status.indexed}/${status.total}, pending ${status.pending}, truncated ${status.truncated}${status.capped ? "; scan capped" : ""}; auto ${automatic ? auto?.status().state ?? "idle" : "off"}${auto?.status().state === "backoff" ? ` (retry in ${Math.ceil(auto.status().retryInMs / 1000)}s)` : ""}`,  "info");
-            return;
-          }
-          const match = /^embed backfill(?:\s+(\d+))?$/.exec(want);
-          if (!match || (match[1] && (Number(match[1]) < 1 || Number(match[1]) > 100))) {
-            ctx.ui?.notify?.("Choose a batch size from 1 to 100.", "info");
-            return;
-          }
-          if (!embeddingConfig.enabled) {
-            ctx.ui?.notify?.("Embedding disabled; configure ~/.pi/bili-memory/embedding.json and restart.", "info");
-            return;
-          }
-          const generation = sessionGeneration;
-          if (!ctx.hasUI || !await ctx.ui.confirm("Upload redacted memory summaries?", `Send up to ${match[1] ?? 20} stored summaries to the configured embedding service. Redaction is best-effort; no original messages are sent.`)) return;
-          if (generation !== sessionGeneration || dbClosed) throw new Error("Embedding session expired");
-          await scanSources();
-          if (generation !== sessionGeneration || dbClosed) throw new Error("Embedding session expired");
-          const output = cards;
-          const owned = output?.beginBatch();
-          let failed = false;
-          try {
-            const result = await getHybrid().backfill(Number(match[1] ?? 20), uploadPermissions);
-            if (!output || result.stored === 0) ctx.ui?.notify?.(`Embedding batch done: uploaded ${result.uploaded}, stored ${result.stored}, skipped ${result.skipped}; indexed ${result.status.indexed}/${result.status.total}.`, "info");
-          } catch (error) { failed = true; throw error; }
-          finally { if (owned) output?.endBatch(failed); triggerAuto(generation); }
-          return;
-        }
-        if (want === "rescan") {
-          const generation = sessionGeneration;
-          const r = await scanSources(true);
-          triggerAuto(generation);
-          const msg = `Force rescan done: sources=${r.sources} files=${r.files} parsed=${r.scanned} newBlocks=${r.inserted} redacted=${r.redacted} failed=${r.failed}`;
-          ctx.ui?.notify?.(msg, "info");
-          return;
-        }
-        if (want === "sources") {
-          const sources = await loadSources();
-          const lines = sources
-            .filter((s) => s.enabled)
-            .map((s) => `- [${s.id}] adapter=${s.adapter} root=${s.root} pattern=${s.pattern}`);
-          const msg = lines.length
-            ? `Allow-listed sources (${lines.length}):\n${lines.join("\n")}\n\nEdit ${cfg.sourcesPath || DEFAULT_CFG.sourcesPath} and choose Rescan sources in /memory.`
-            : `No allow-listed sources enabled. Edit ${cfg.sourcesPath || DEFAULT_CFG.sourcesPath} and choose Rescan sources in /memory.`;
-          ctx.ui?.notify?.(msg, "info");
-          return;
-        }
-        const pm = /^prune\s+(\d+)$/.exec(want);
-        if (pm) {
-          const keepDays = Number(pm[1]);
-          if (!Number.isInteger(keepDays) || keepDays < 0 || keepDays > 36500) {
-            ctx.ui?.notify?.("Enter retention days from 0 to 36500 (0 deletes all timestamped summaries).", "info");
-            return;
-          }
-          const cutoff = Date.now() - keepDays * 86400000;
-          const maxId = getDb().db.prepare("SELECT coalesce(max(id),0) AS n FROM blocks").get().n;
-          const count = getDb().db.prepare("SELECT count(*) AS n FROM blocks WHERE created_at IS NOT NULL AND created_at < ? AND id <= ?").get(cutoff, maxId).n;
-          if (!ctx.hasUI) { ctx.ui?.notify?.("Pruning requires interactive confirmation; nothing was deleted.", "warning"); return; }
-          if (!await ctx.ui.confirm("Delete old memories?", `About ${count} summaries and their vectors will be deleted, keeping the last ${keepDays} days. Durable deletion markers prevent rescans from restoring them.`)) return;
-          if (!current()) return;
-          const p = getDb().prune(keepDays, cutoff, maxId);
-          const msg = `Prune done: removed ${p.removedBlocks} block(s) / ${p.removedSources} empty source(s), ${p.remainingBlocks} remain (kept ${keepDays} day(s))`;
-          ctx.ui?.notify?.(msg, "info");
-          return;
-        }
-        if (want && want !== "status") { ctx.ui?.notify?.("Use /memory to open the memory manager.", "info"); return; }
-        const st = getDb().stats();
-        const msg =
-          `Memory store: ${st.sources} sources / ${st.sources_with_blocks} with compressed blocks / ` +
-          `${st.blocks} blocks / ${fmtTokens(st.tokens)} tok compressed total\nDB: ${st.dbPath}\n` +
-          `Log: ${cfg.logPath || DEFAULT_CFG.logPath}`;
-        ctx.ui?.notify?.(msg, "info");
+  const memoryStatus = (detailed = false): string => {
+    const st = getDb().stats();
+    const state = automatic ? auto?.status().state ?? "idle" : "off";
+    const background = state === "backoff" ? "Paused; retrying" : state === "running" ? "Updating" : state === "scheduled" ? "Scheduled" : state === "off" ? "Off" : "Ready";
+    if (!detailed) return `${st.blocks} stored memories · Semantic search ${embeddingConfig.enabled ? "on" : "off"} · Background ${background.toLowerCase()}`;
+    const vs = embeddingConfig.enabled ? getHybrid().status() : null;
+    return `Bili Memory · ${st.blocks} stored memories\n` +
+      `Search: ${vs ? `semantic search prepared for ${vs.indexed}/${vs.total} stored memories${vs.capped ? " (scan limit reached)" : ""}` : "keyword search only"}\n` +
+      `Background updates: ${background}. Keyword search remains available for authorized memories.\n` +
+      "Stored totals include retained memories that may be excluded from search.";
   };
 
-  pi.registerCommand("memory", {
-    description: "Open the Memory manager",
+  const runMemoryAction = async (want: string, ctx: any, current: () => boolean) => {
+    if (want === "browse") {
+      const ownClose = (close?: () => void) => { if (current()) closeBrowser = close; else close?.(); };
+      const policy = await buildSourcePolicy();
+      if (!current()) return;
+      const query = `SELECT b.id,b.block_id AS blockId,b.topic,substr(b.summary,1,4096) AS excerpt,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file`;
+      const describe = (r): BrowserRow => ({ id: String(r.id),
+        title: memoryTitle(sanitizeDisplay(r.topic ?? ""), sanitizeDisplay(r.excerpt ?? r.summary ?? ""), sanitizeDisplay(r.blockId)),
+        project: preview(sanitizeDisplay(r.project ?? "Uncategorized"), 60), blockId: preview(sanitizeDisplay(r.blockId), 60),
+        date: Number.isFinite(r.createdAt) ? new Date(r.createdAt).toLocaleDateString("en-GB") : "Unknown date",
+        vector: embeddingConfig.enabled ? ({ missing: "Search preparation pending", stale: "Search needs refresh", ready: "Semantic search prepared", truncated: "Semantic search prepared (prefix only)" }[getHybrid().vectorState(r.id)]) : "Keyword search only" });
+      const rows = getDb().db.prepare(`${query} ORDER BY b.id DESC LIMIT 50`).all().map(describe);
+      await showMemoryBrowser(ctx, rows, id => {
+        if (!current()) return undefined;
+        const row = getDb().db.prepare(`SELECT b.id,b.block_id AS blockId,b.topic,substr(b.summary,1,4096) AS excerpt,b.summary,b.created_at AS createdAt,s.project FROM blocks b LEFT JOIN sources s ON s.source_file=b.source_file WHERE b.id=?`).get(Number(id));
+        const project = getDb().db.prepare('SELECT state FROM memory_block_projects WHERE block_id=?').get(Number(id));
+        return row ? { ...describe(row), summary: `Source policy: ${policy.state(row.id)} (snapshot at open)\nProject attribution: ${project?.state ?? 'unknown'}\n\n` + cleanBody(sanitizeDisplay(row.summary)) } : undefined;
+      }, current, ownClose);
+    } else if (want === "status") {
+      ctx.ui?.notify?.(memoryStatus(true), "info");
+    } else if (want === "rescan") {
+      const generation = sessionGeneration;
+      const r = await scanSources();
+      if (!current()) return;
+      // Only existing autoBackfill consent permits uploads; refreshing is not consent.
+      triggerAuto(generation);
+      ctx.ui?.notify?.(`Memory refresh complete${r.inserted ? ` · Added ${r.inserted} ${r.inserted === 1 ? "memory" : "memories"}` : ""}${r.failed ? ` · ${r.failed} source checks need attention` : ""}.`, "info");
+    }
+  };
+
+  pi.registerCommand("bili-memory", {
+    description: "Browse memories, view status or refresh",
     handler: async (args, ctx) => {
       if (String(args || '').trim()) {
-        ctx.ui?.notify?.('Open /memory and choose an action from the menu.', 'info');
+        ctx.ui?.notify?.('Open /bili-memory and choose an action from the menu.', 'info');
         return;
       }
       try {
         const generation = sessionGeneration;
         const current = () => generation === sessionGeneration && !dbClosed;
-        const st = getDb().stats();
-        const vs = embeddingConfig.enabled ? getHybrid().status() : null;
-        const status = `${st.blocks} summaries · Vectors ${vs ? `${vs.indexed}/${vs.total}` : 'off'} · Auto ${automatic ? auto?.status().state ?? 'idle' : 'off'}`;
-        let action = await memoryMenu(ctx, status, current);
+        const action = await memoryMenu(ctx, memoryStatus(), current);
         if (!action || !current()) return;
-        if (action === 'prune' || action === 'embed backfill') {
-          const prune = action === 'prune';
-          const value = await ctx.ui.input(prune ? 'How many days of memory should be retained?' : 'How many missing vectors should be rebuilt?',
-            prune ? '0–36500 days. 0 deletes all timestamped summaries.' : '1–100 summaries per batch. Example: 20.');
-          if (!current() || value === undefined) return;
-          const number = Number(value.trim());
-          if (!/^\d+$/.test(value.trim()) || number < (prune ? 0 : 1) || number > (prune ? 36500 : 100)) {
-            ctx.ui.notify(prune ? 'Enter retention days from 0 to 36500.' : 'Enter a batch size from 1 to 100.', 'warning'); return;
-          }
-          action += ` ${number}`;
-        }
         await runMemoryAction(action, ctx, current);
       } catch (e) {
-        logLine(`/memory error: ${withoutPaths(e.stack || e.message)}`);
+        logLine(`/bili-memory error: ${withoutPaths(e.stack || e.message)}`);
         ctx.ui?.notify?.(`Memory operation failed: ${withoutPaths(e.message)}`, "error");
       }
     },

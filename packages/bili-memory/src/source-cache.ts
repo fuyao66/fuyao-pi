@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, constants } from 'node:fs';
 import { realSourcePath, readSourceFile, sourceStamp } from './source-files.js';
 import type { SourceDocument } from './source-policy.js';
 
@@ -12,11 +12,13 @@ export class SourceCache {
     const old = this.entries.get(key);
     if (old) { this.bytes -= old.bytes; this.entries.delete(key); }
   }
-  async read(key: string, file: string, parse: (data: unknown, body: string) => SourceDocument): Promise<SourceDocument> {
+  async read(key: string, file: string, parse: (data: unknown, body: string) => SourceDocument, maxReadBytes?: number): Promise<SourceDocument> {
     try {
       await realSourcePath(file);
+      await fs.access(file, constants.R_OK);
       const stat = await fs.lstat(file);
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Not a regular source file');
+      if (maxReadBytes !== undefined && stat.size > maxReadBytes) throw new Error('Source exceeds read budget');
       const stamp = sourceStamp(stat);
       const cached = this.entries.get(key);
       if (cached?.stamp === stamp) {
@@ -24,12 +26,17 @@ export class SourceCache {
         return cached.value;
       }
       this.remove(key);
-      const { body, stat: opened } = await readSourceFile(file);
+      const { body, stat: opened } = await readSourceFile(file, maxReadBytes);
       const value = parse(JSON.parse(body), body);
       if (stamp !== sourceStamp(opened)) {
         return { state: 'missing/unreadable' }; // Atomic replacement raced the read: retry next operation.
       }
-      const bytes = Buffer.byteLength(body);
+      // Charge the retained normalized summaries, not the upstream file's raw
+      // conversation. A 20MiB BC journal may contain only 10KiB of indexable blocks.
+      let bytes = 128;
+      if (value.state === 'loaded') for (const [id, block] of value.blocks) {
+        bytes += Buffer.byteLength(id) + Buffer.byteLength(JSON.stringify(block)) + 128;
+      }
       if (value.state === 'loaded' && bytes <= this.maxBytes) {
         while (this.entries.size && (this.entries.size >= this.maxEntries || this.bytes + bytes > this.maxBytes)) {
           this.remove(this.entries.keys().next().value!);

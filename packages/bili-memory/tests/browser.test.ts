@@ -1,10 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { cleanBody, MemoryBrowser, showMemoryBrowser, type BrowserRow } from "../src/memory-browser.ts";
+import { cleanBody, memoryTitle, MemoryBrowser, showMemoryBrowser, type BrowserRow } from "../src/memory-browser.ts";
 const theme = { fg: (_: string, s: string) => s, bold: (s: string) => s } as any;
 const row: BrowserRow = { id: "1", title: "Corrected activity card approach 中文", project: "workspace", blockId: "b21", date: "2026/9/29", vector: "向量就绪" };
 const summary = "TASK AS OF THIS BLOCK: synthetic sample\n\n中文正文保持换行\n" + "long_identifier_".repeat(200) + "\n完整尾部_END";
+test("display titles prefer source topic, then bounded Markdown heading or text, without editing content", () => {
+  const body = '\nOpening text\n\n## **检索改进** ###\nTail';
+  assert.equal(memoryTitle('  Source topic  ', body, 'b9'), 'Source topic');
+  assert.equal(memoryTitle('\x1b[31m\x1b[0m', body, 'b9'), '检索改进');
+  assert.equal(memoryTitle(null, 'Intro\n\nSetext heading\n---\nBody', 'b9'), 'Setext heading');
+  assert.equal(memoryTitle('', '```ts\n# not a title\n```\n## [Real heading](https://example.invalid)', 'b9'), 'Real heading');
+  assert.equal(memoryTitle('', '\n- **Completed** migration.\nNext paragraph', 'b9'), 'Completed migration.');
+  assert.equal(memoryTitle('', '\x1b]52;c;private\x07\x1b[31mPlain\x1b[0m\nNext', 'b9'), 'Plain');
+  assert.equal(memoryTitle('', '\n---\n```\ncode only\n```', 'b9'), 'b9');
+  assert.equal(memoryTitle('', '', ''), 'Untitled memory');
+  const long = 'x'.repeat(159) + '😀 tail';
+  assert.equal(memoryTitle('', long, 'b9'), 'x'.repeat(159));
+  assert.equal(memoryTitle('', 'x'.repeat(4096) + '\n# Hidden late heading', 'b9'), 'x'.repeat(160));
+  assert.equal(body, '\nOpening text\n\n## **检索改进** ###\nTail');
+});
 test("list omits body; Enter loads full paragraphs; End reaches tail; Escape returns then exits", () => {
   let loaded = 0, closed = 0;
   const browser = new MemoryBrowser([row], () => { loaded++; return {...row, summary}; }, theme, () => 18, () => {}, () => {closed++;}, () => true);
@@ -60,5 +75,5 @@ test("body removes terminal escapes without flattening paragraphs; non-TUI never
   assert.equal(cleanBody("a\n\n\x1b[31mb\x1b[0m\x1b]52;c;bad\x07\n尾"),"a\n\nb\n尾");
   let notified="";
   await showMemoryBrowser({mode:"rpc",hasUI:true,ui:{notify:(s:string)=>{notified=s;},custom:()=>{throw Error('unexpected');}}} as any,[row],()=>undefined,()=>true,()=>{});
-  assert.match(notified,/TUI mode/); assert.ok(!notified.includes("TASK AS"));
+  assert.match(notified,/Open \/bili-memory in TUI mode/); assert.ok(!notified.includes("TASK AS"));
 });

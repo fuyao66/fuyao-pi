@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { parseBiliIdentity, findBiliSessionFile } from '../src/bili-identity.js';
 
 const message = { rawId: 'h_one', ref: 'm00001', identityHash: 'a'.repeat(64) };
-const snapshot = { ok: true, protocolVersion: 1, status: 'exact', conversationId: 'pi-session', sessionId: 'proxy-session', orderedMessages: [message] };
+const snapshot = { ok: true, protocolVersion: 1, status: 'exact', conversationId: 'pi-session', sessionId: 'proxy-session', parentRevision: 'b'.repeat(64), orderHash: 'c'.repeat(64), orderedMessages: [message] };
 
 test('proxy identity requires exact conversation and unique bidirectional references', () => {
   assert.equal(parseBiliIdentity(snapshot, 'pi-session')?.sessionId, 'proxy-session');

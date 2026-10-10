@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { realpathSync } from 'node:fs';
+import { coverBiliBlocks } from './native-storage.js';
 
 export interface WorkspaceIdentity { mode: 'local' | 'remote' | 'unavailable'; generation?: number; target?: string; port?: number; root?: string }
 export interface ProjectScope { id: string | null; stamp: string; label: string }
@@ -71,13 +72,17 @@ export function recordMessageProjects(db: any, file: string, ids: string[], proj
 /** Proxy evidence is revision-bound. A reused identity with different content
  * revokes the previous proof; an unknown observation cannot promote an old id. */
 export function recordBiliMessageProjects(db: any, file: string,
-  rows: ReadonlyArray<{ rawId: string; identityHash: string; projectId: string | null }>): void {
+  rows: ReadonlyArray<{ rawId: string; identityHash: string; projectId: string | null }>, identities?: ReadonlyArray<{ rawId: string; identityHash: string }>): void {
   db.exec('SAVEPOINT memory_proxy_evidence');
   try {
     const get = db.prepare('SELECT identity_hash FROM memory_proxy_message_hashes WHERE source_file=? AND message_id=?');
     const hash = db.prepare('INSERT OR REPLACE INTO memory_proxy_message_hashes VALUES(?,?,?)');
     const put = db.prepare('INSERT OR IGNORE INTO memory_message_projects VALUES(?,?,?)');
-    for (const row of rows) {
+    // Reconcile ALL currently observed hashes, even when a workspace change or
+    // failed write discarded a volatile attribution delta. Missing assignments
+    // remain unknown; full identity reconciliation never invents ownership.
+    const assignments = new Map(rows.map(row => [row.rawId, row.projectId]));
+    for (const row of identities ?? rows) {
       const previous = get.get(file, row.rawId);
       if (previous && previous.identity_hash !== row.identityHash) {
         db.prepare('UPDATE memory_message_projects SET project_id=NULL WHERE source_file=? AND message_id=?').run(file, row.rawId);
@@ -88,9 +93,10 @@ export function recordBiliMessageProjects(db: any, file: string,
            WHERE b.source_file=? AND (j.value=? OR j.value LIKE ? ESCAPE '\\'))`)
           .run(file, row.rawId, row.rawId.replace(/[\\%_]/g, m => '\\' + m) + '#%');
       }
-      put.run(file, row.rawId, previous && previous.identity_hash !== row.identityHash ? null : row.projectId);
+      put.run(file, row.rawId, previous && previous.identity_hash !== row.identityHash ? null : assignments.get(row.rawId) ?? null);
       hash.run(file, row.rawId, row.identityHash);
     }
+    if (identities) coverBiliBlocks(db, file, new Set(identities.map(row => row.rawId)));
     assignBlockProjects(db, file);
     db.exec('RELEASE memory_proxy_evidence');
   } catch (error) {
@@ -100,13 +106,19 @@ export function recordBiliMessageProjects(db: any, file: string,
 export function assignBlockProjects(db: any, file: string): void {
   const lookup = db.prepare('SELECT project_id FROM memory_message_projects WHERE source_file=? AND message_id=?');
   const put = db.prepare('INSERT OR REPLACE INTO memory_block_projects VALUES(?,?,?)');
+  const nativeMetadata = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_native_metadata'").get();
+  const native = nativeMetadata ? db.prepare('SELECT 1 FROM memory_native_metadata WHERE block_id=?') : null;
+  const coverage = nativeMetadata ? db.prepare('SELECT 1 FROM memory_bili_block_coverage WHERE block_id=? AND summary IS ? AND msg_ids IS ?') : null;
   for (const row of db.prepare('SELECT id,msg_ids,summary FROM blocks WHERE source_file=?').all(file)) {
     db.prepare('DELETE FROM memory_project_legacy_proofs WHERE block_id=? AND (summary IS NOT ? OR msg_ids IS NOT ?)').run(row.id, row.summary, row.msg_ids);
     let ids: string[] = []; try { ids = JSON.parse(row.msg_ids ?? '[]'); } catch { /* Legacy unknown. */ }
     // Expansion references are capped at 4000 by the importer. At the cap we
     // cannot prove completeness; do not infer a project from a partial prefix.
     if (!Array.isArray(ids) || ids.length >= 4000 || ids.some(id => typeof id !== 'string')) ids = [];
-    const projects = ids.map(id => lookup.get(file, id.split('#')[0])?.project_id ?? null);
+    // Raw IDs can be reused in a rewritten proxy history. Persisted metadata alone
+    // is not a current message-identity proof. Imported revision proofs stay separate.
+    const proven = !native?.get(row.id) || !!coverage?.get(row.id, row.summary, row.msg_ids);
+    const projects = ids.map(id => proven ? lookup.get(file, id.split('#')[0])?.project_id ?? null : null);
     const known = new Set(projects.filter(Boolean));
     const proof = db.prepare('SELECT project_id FROM memory_project_legacy_proofs WHERE block_id=?').get(row.id);
     // Missing old per-message rows do not negate a retained, revision-bound proof.

@@ -1,5 +1,5 @@
-/** Coalesce compress completions without blocking tools. BCP normally saves before
- * returning; bounded follow-up passes also cover delayed/unavailable sidecars. */
+/** Coalesce compress completions without blocking tools. BC persistence may be
+ * delayed; bounded follow-up passes cover unavailable native session files. */
 export class CompressionScan {
   private timer?: ReturnType<typeof setTimeout>;
   private running = false;

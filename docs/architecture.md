@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Upstream runtime | Pi core and public APIs | Pinned dependencies in root `package.json`; installed Pi CLI must match |
 | Locally maintained capabilities | First-party remote-ssh; Billion Memory, Statusline and GPT Fast derivatives | `packages/<name>/`, including tests and provenance |
-| Deferred capability | Advisor source retained, disabled in the profile | Historical BCP contract; not certified for BC |
+| Deferred capability | Advisor source retained, disabled in the profile | Legacy context contract; not certified for BC |
 | Environment composition | Root manifest, companion profile, public defaults | `package.json`, `config/`, `scripts/setup.ts`, root `test/` |
 | Private runtime state | The user's Pi installation and plugin-specific local files | Outside Git: credentials, settings, sessions, memory DB and SSH configuration |
 
@@ -35,13 +35,15 @@ Authorized BC v3 sessions + immutable migrated history
     → scoped memory_search / revision-bound expansion
 ```
 
-BC remains authoritative for new summary content; Billion Memory is a derived cross-session index in `~/.pi/bili-memory/`. Its collector uses public exact conversation/session/message snapshots, never a latest-file guess. Initial/resumed history, unavailable snapshots, branch/rewrite changes and uncertain workspace transitions do not become new ownership proof. Reliable per-message evidence supports many-to-many workspace associations; a session directory is only a separately labelled keyword fallback.
+BC remains authoritative for new summary content; Billion Memory is a derived cross-session index in `~/.pi/bili-memory/`. Exact public status maps the current conversation to an authorized persisted session; fork-safe snapshots separately prove ordered message/workspace evidence. Images/opaque histories do not block summary ingestion or invent ownership. A metadata-only locator rechecks listing, file identity, permissions and ambiguity, never guessing the latest file. Initial/resumed history, branch/rewrite changes and uncertain workspace transitions are not new ownership proof; a session directory is only a separately labelled keyword fallback.
+
+Native summaries are complete or explicitly rejected by storage budgets, not silently truncated. BC activity/child metadata remains attached to stable index rows. Source/workspace authorization precedes exact-content grouping and parent/child diversity; authorized alternative receipts remain independently traceable. These changes do not delete historical copies, repeat compression, or introduce a second proxy.
 
 Normal runtime accepts only `bili-session` and `memory-history` sources. Legacy adapters exist only in explicit offline migration/tests. Immutable history archives preserve sanitized summaries, provenance and metadata, not old raw logs or live fold state. All 845 legacy summaries and 704 original vectors were verified after the retired-writer tail completion. Project links are index relationships, not duplicate memories. The separately rebuilt native BC sessions are distinct sources from these summary-only archives; 845 archived summaries and 574 session blocks are different inventories and may overlap in content, not a count of unique additional memories.
 
 Search, expansion and uploads check source permission and content/reference revision. New BC expansion reads retained block text only if available: list → explicit chunk selection + revision. It does not recursively follow placeholders. Migrated archives support summary pages only. Management browsing can inspect retained excluded rows; source policy is not an OS sandbox.
 
-Successful compression schedules background scans with bounded delayed retries; startup, message-end, settled and search scans provide fallbacks. Indexing precedes embeddings. Post-commit feedback is excluded from model context. Remote embedding is separately opted in and remains best-effort sanitized, not guaranteed secret-free. See [Billion Memory contract](../packages/bili-memory/README.md).
+Successful compression schedules background scans with bounded delayed retries; startup, settled and search scans provide fallbacks. Ordinary message-end observes attribution only, without directory/index/vector work. Indexing precedes embeddings. Post-commit feedback is excluded from model context. Remote embedding is separately opted in and remains best-effort sanitized, not guaranteed secret-free. See [Billion Memory contract](../packages/bili-memory/README.md).
 
 ### Workspace: remote-ssh
 

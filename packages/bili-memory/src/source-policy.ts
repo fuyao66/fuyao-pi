@@ -41,7 +41,7 @@ export const sourceKey = (file: string, kind: string) => JSON.stringify([file, k
 export function revisionKey(row: Pick<PolicyRow, 'summary' | 'topic' | 'msgIds' | 'refStart' | 'refEnd'>): string {
   return createHash('sha256').update(JSON.stringify([row.summary, row.topic ?? null, row.msgIds ?? null, row.refStart ?? null, row.refEnd ?? null])).digest('hex');
 }
-/** Immutable operation snapshot. Inactive BCP children remain valid when present;
+/** Immutable operation snapshot. Inactive BC children remain valid when present;
  * absence and revocation exclude operations but never delete stored history. */
 export class SourcePolicy {
   readonly allowedIds: number[] = [];

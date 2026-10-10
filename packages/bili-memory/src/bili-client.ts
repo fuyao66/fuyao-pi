@@ -1,7 +1,6 @@
-import { parseBiliIdentity, type BiliIdentity } from './bili-identity.js';
+import { parseBiliIdentity, parseBiliSession, type BiliIdentity, type BiliSession } from './bili-identity.js';
 
-/** Native Pi publishes its live proxy origin here. Only local control-plane
- * endpoints are supported; never send session identities to a model base URL. */
+/** Control-plane identities must never go to a model/provider endpoint. */
 export function localBiliOrigin(raw: string | undefined): string | null {
   if (!raw) return null;
   try {
@@ -12,13 +11,12 @@ export function localBiliOrigin(raw: string | undefined): string | null {
   } catch { return null; }
 }
 
-/** The raw snapshot is used solely for identities, never for model context.
- * Read a bounded body; an unavailable/opaque snapshot fails closed. */
-export async function fetchBiliIdentity(origin: string, conversationId: string, signal?: AbortSignal): Promise<BiliIdentity | null> {
+async function controlJson(origin: string, conversationId: string, endpoint: 'status' | 'snapshot', budget: number, signal?: AbortSignal): Promise<unknown> {
   const local = localBiliOrigin(origin);
   if (!local || !conversationId || signal?.aborted) return null;
   try {
-    const response = await fetch(`${local}/__bili/plugin/snapshot?conversationId=${encodeURIComponent(conversationId)}`, {
+    // In particular: no fallback=latest. A 200 response is not an identity proof.
+    const response = await fetch(`${local}/__bili/plugin/${endpoint}?conversationId=${encodeURIComponent(conversationId)}`, {
       redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(2000), ...(signal ? [signal] : [])]),
     });
     if (!response.ok || !response.body) { await response.body?.cancel(); return null; }
@@ -27,10 +25,19 @@ export async function fetchBiliIdentity(origin: string, conversationId: string, 
       while (true) {
         const part = await reader.read(); if (part.done) break;
         length += part.value.byteLength;
-        if (length > 16 * 1024 * 1024) { await reader.cancel(); return null; }
+        if (length > budget) { await reader.cancel(); return null; }
         chunks.push(part.value);
       }
     } finally { reader.releaseLock(); }
-    return parseBiliIdentity(JSON.parse(Buffer.concat(chunks).toString('utf8')), conversationId);
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch { return null; }
+}
+
+/** Exact conversation mapping works even when image/opaque history cannot fork. */
+export async function fetchBiliSession(origin: string, conversationId: string, signal?: AbortSignal): Promise<BiliSession | null> {
+  return parseBiliSession(await controlJson(origin, conversationId, 'status', 1024 * 1024, signal), conversationId);
+}
+/** Raw snapshot is used only for attribution, never as the model-visible context. */
+export async function fetchBiliIdentity(origin: string, conversationId: string, signal?: AbortSignal): Promise<BiliIdentity | null> {
+  return parseBiliIdentity(await controlJson(origin, conversationId, 'snapshot', 16 * 1024 * 1024, signal), conversationId);
 }

@@ -126,7 +126,8 @@ test('indexed policy preserves revision validation before limit and FTS-driven p
     const withdrawn = await hybrid.search('sharedneedle', { ...opts, refreshPolicy: async () =>
       ++refreshes === 1 ? { allowedIds: policy.allowedIds, authorizedRows: policy.authorizedRows }
         : { allowedIds: [], authorizedRows: [] } });
-    assert.equal(refreshes, 2); assert.equal(withdrawn.rows.length, 0); assert.equal(withdrawn.coverage?.total, 0);
+    // Pre-gate, post-yield and post-coverage authorization snapshots are all fresh.
+    assert.equal(refreshes, 3); assert.equal(withdrawn.rows.length, 0); assert.equal(withdrawn.coverage?.total, 0);
     await hybrid.backfill(100);
     // Search yields while scoring; a second synchronous policy query must not fail to
     // drop its TEMP relation, and it must not count TEMP inserts as a store mutation.

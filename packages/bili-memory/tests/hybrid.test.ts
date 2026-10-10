@@ -268,7 +268,7 @@ test("vectors roundtrip, bad vectors rejected, RRF rewards dual hits", () => {
   assert.deepEqual(decodeVector(encodeVector([1, 0]), 2), [1, 0]);
   assert.throws(() => decodeVector(Buffer.alloc(8), 2));
   assert.throws(() => decodeVector(Buffer.alloc(4), 2));
-  assert.deepEqual(fuse([{ id: 1 }, { id: 2 }], [{ id: 2 }, { id: 3 }], 2).map(x => x.id), [2, 1]);
+  assert.deepEqual(fuse([{ id: 1, summary: 'one' }, { id: 2, summary: 'two' }], [{ id: 2, summary: 'two' }, { id: 3, summary: 'three' }], 2).map(x => x.id), [2, 1]);
 });
 
 test("client enforces indexes/dimensions/nonzero/finite vectors and sanitizes provider errors", async () => {

@@ -338,6 +338,7 @@ fs.writeFileSync(
     version: 3,
     id: "pfa-test",
     payload: {
+      version: 3, id: "pfa-test",
       state: {
         blocks: [
           {

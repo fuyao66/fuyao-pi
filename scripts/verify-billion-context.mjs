@@ -5,6 +5,8 @@ import {join, resolve} from 'node:path';
 import assert from 'node:assert/strict';
 import { BcpLocalArtifacts } from '../packages/remote-ssh/src/pi/integrations/bcp-local.ts';
 import { BiliCollector } from '../packages/bili-memory/src/bili-collector.ts';
+import { MemoryDb, loadSqlite, configureForTests } from '../packages/bili-memory/src/extension.ts';
+import { recordBiliMessageProjects, scopeAllowedIds } from '../packages/bili-memory/src/project-scope.ts';
 // Opt-in offline integration probe: pass an unpacked, reviewed 0.1.189 package.
 // No installation or production configuration changes; upstream is loopback only.
 const packageDir = process.argv[2] && resolve(process.argv[2]);
@@ -79,7 +81,7 @@ try{
  const scope={id:'fixture-project',stamp:'fixture-project:0',label:'fixture'};
  const evidence=[];
  const collector=new BiliCollector({conversationId:'migration-fixture',origin:()=>origin,
-  scope:()=>scope,current:()=>true,files:async()=>readdirSync(sessionDir).filter(f=>f.endsWith('.json')).map(f=>join(sessionDir,f)),
+  scope:()=>scope,current:()=>true,files:async()=>({files:readdirSync(sessionDir).filter(f=>f.endsWith('.json')).map(f=>join(sessionDir,f)),complete:true}),
   ingest:async(file)=>JSON.parse(readFileSync(file,'utf8')).id==='migration-fixture',
   saveEvidence:(_file,rows)=>evidence.push(rows)});
  try {
@@ -92,6 +94,41 @@ try{
   assert.ok(evidence[1].length>0);assert.ok(evidence[1].every(row=>row.projectId===scope.id));
   console.log('PASS actual proxy identities -> persisted source -> new-workspace evidence, old history not relabeled.');
  } finally {collector.stop();}
+ // A fork-unsafe snapshot is NOT a failed memory source. Actual image and opaque
+ // wire histories still compress/persist; status proves the exact session only,
+ // so the collector indexes complete summaries without guessing project ownership.
+ configureForTests({legacyOffline:false,logPath:join(root,'memory.log')});await loadSqlite();
+ const store=new MemoryDb(join(root,'native-memory.sqlite'));store.open();
+ try {
+  for(const variant of ['image','opaque']) {
+   const conversationId=`native-memory-${variant}`;
+   // A fresh history, not a copy containing the earlier compress tool receipt:
+   // the proxy deliberately restores folds from such receipts on replay.
+   const history=structuredClone(messages.slice(0,20));
+   history[0].content=`ISOLATED_NATIVE_MEMORY_${variant}`;
+   history[1].content=`Start an independent ${variant} fixture.`;
+   history[2].content=`NATIVE_${variant}_OLD_DETAIL `.repeat(500);
+   if(variant==='image')history.push({role:'user',content:[{type:'text',text:'SYNTHETIC_IMAGE_ONLY'},{type:'image_url',image_url:{url:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='}}]});
+   else history.push({role:'assistant',content:'SYNTHETIC_OPAQUE_AUDIO_ONLY',audio:{id:'synthetic-audio-fixture'}});
+   const wire=await fetch(target,{method:'POST',headers:{...headers,'x-bili-plugin-conversation':conversationId},body:JSON.stringify({model:'fixture',messages:history,stream:false,max_tokens:256}),signal:AbortSignal.timeout(15000)});
+   assert.equal(wire.status,200,await wire.text());
+   const unavailable=await fetch(origin+'/__bili/plugin/snapshot?conversationId='+conversationId);assert.equal(unavailable.status,409,await unavailable.text());
+   const summary=`NATIVE_${variant.toUpperCase()}_SUMMARY: earlier synthetic investigation was compressed and remains searchable despite an unsafe fork snapshot.`;
+   const compressed=await(await fetch(origin+'/__bili/plugin/tool',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversationId,tool:'compress',args:{content:[{startId:'m00002',endId:'m00002',summary}]}}),signal:AbortSignal.timeout(15000)})).json();
+   assert.equal(compressed.blocksCreated,1,JSON.stringify(compressed));
+   let ingests=0,proofs=0;
+   const opaqueCollector=new BiliCollector({conversationId,origin:()=>origin,scope:()=>scope,current:()=>true,
+    files:async()=>({files:readdirSync(sessionDir).filter(f=>f.endsWith('.json')).map(f=>join(sessionDir,f)),complete:true}),
+    ingest:async(file,id,stamp,current)=>{ingests++;return(await store.ingestSourceFile(file,{kind:'bili',expectedSessionId:id,expectedStamp:stamp},false,null,current)).ok;},
+    saveEvidence:(file,rows,identity)=>{proofs++;recordBiliMessageProjects(store.db,file,rows,identity.messages);}});
+   try {
+    for(let i=0;i<10;i++){await new Promise(r=>setTimeout(r,100));if(await opaqueCollector.scan()==='stored'&&store.search(`NATIVE_${variant.toUpperCase()}_SUMMARY`).rows.length)break;}
+    const hit=store.search(`NATIVE_${variant.toUpperCase()}_SUMMARY`).rows;assert.equal(hit.length,1);assert.equal(hit[0].summary,summary);
+    assert.ok(ingests>0);assert.equal(proofs,0);assert.deepEqual(scopeAllowedIds(store.db,[hit[0].id],scope,false),[]);
+    console.log(`PASS actual ${variant} snapshot409 -> successful compress/persist -> searchable complete summary, no invented project proof.`);
+   }finally{opaqueCollector.stop();}
+  }
+ }finally{store.close();}
  // Load Pi's native extension in a separate process: its global network patches
  // must not intercept this harness or escape its isolated environment.
  const native=spawn(process.execPath,['--import','tsx',join(import.meta.dirname,'verify-billion-native.mjs'),packageDir,root,`http://127.0.0.1:${upstream.address().port}/v1`,...(process.argv[3]?[resolve(process.argv[3])]:[])],{

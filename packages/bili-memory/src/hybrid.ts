@@ -1,4 +1,6 @@
 import { sqlAuthorization, storeChanges } from './source-policy.js';
+import { ensureNativeSchema } from './native-storage.js';
+import { CANDIDATE_LIMIT, contentKey, distinctRows, fuseDistinct } from './retrieval.js';
 import { randomUUID } from "node:crypto";
 import type { MemoryRecord } from "./activity.js";
 import { hash, EmbeddingClient, type EmbeddingConfig, namespace, prepareText, encodeVector, cosineBlob } from "./embeddings.js";
@@ -6,6 +8,7 @@ import { hash, EmbeddingClient, type EmbeddingConfig, namespace, prepareText, en
 interface Store { db: any; closed: boolean; search(query: string, opts?: any): { mode: string; rows: any[] } }
 export function ensureVectorSchema(store: Store): void {
   if (!store.db || store.closed) throw new Error("Memory store closed");
+  ensureNativeSchema(store.db);
   store.db.exec(`CREATE TABLE IF NOT EXISTS memory_vectors (
     block_id INTEGER NOT NULL, namespace TEXT NOT NULL, input_hash TEXT NOT NULL,
     dimensions INTEGER NOT NULL, vector BLOB NOT NULL, truncated INTEGER NOT NULL,
@@ -24,15 +27,9 @@ export function ensureVectorSchema(store: Store): void {
 }
 const columns = `b.id, b.source_file AS sourceFile, b.kind, b.block_id AS blockId, b.tier, b.topic,
   b.ref_start AS refStart, b.ref_end AS refEnd, b.compressed_tokens AS tokens,
-  b.created_at AS createdAt, b.summary, s.project, s.cwd`;
-export function fuse(lexical: any[], semantic: any[], limit: number): any[] {
-  const candidates = new Map<number, { row: any; score: number }>();
-  for (const list of [lexical, semantic]) list.forEach((row, index) => {
-    const previous = candidates.get(row.id);
-    candidates.set(row.id, { row: previous?.row ?? row, score: (previous?.score ?? 0) + 1 / (60 + index + 1) });
-  });
-  return [...candidates.values()].sort((a, b) => b.score - a.score || a.row.id - b.row.id).slice(0, limit).map(x => x.row);
-}
+  b.created_at AS createdAt, b.summary, s.project, s.cwd,
+  n.session_id AS sessionId, n.active, n.direct_block_ids AS directBlockIds`;
+export const fuse = fuseDistinct;
 
 export class HybridMemory {
   readonly ns: string;
@@ -73,6 +70,7 @@ export class HybridMemory {
       const statement = this.store.db.prepare(`SELECT ${columns}, ${this.hasReferences() ? 'b.msg_ids' : 'NULL'} AS msgIds,
         v.input_hash AS inputHash, v.dimensions, v.vector, v.truncated
         FROM blocks b JOIN sources s ON s.source_file=b.source_file
+        LEFT JOIN memory_native_metadata n ON n.block_id=b.id
         LEFT JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=?
         WHERE b.id>? ${project ? 'AND s.project=?' : ''} AND ${policy.sql}
         ORDER BY b.id LIMIT ?`);
@@ -113,13 +111,17 @@ export class HybridMemory {
       WHERE ${policy.sql} ${opts.project ? 'AND s.project=?' : ''}`).get(...(opts.project ? [opts.project] : [])).n; }
     finally { policy.dispose(); }
   }
-  private scopedStatus(opts: { project?: string; allowedIds?: number[]; authorizedRows?: any[] }) {
+  private async scopedStatus(opts: { project?: string; allowedIds?: number[]; authorizedRows?: any[] }, signal?: AbortSignal) {
     const total = this.scopedTotal(opts);
     let scanned = 0, indexed = 0, truncated = 0;
     for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
       scanned++;
       if (row.vector && row.dimensions === this.config.dimensions && row.inputHash === this.input(row).hash) {
         try { cosineBlob(row.vector, this.config.dimensions); indexed++; truncated += row.truncated ? 1 : 0; } catch { /* Invalid. */ }
+      }
+      if (scanned % 32 === 0) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        if (!this.valid() || signal?.aborted) throw new Error('Memory search cancelled');
       }
     }
     return { total, scanned, indexed, pending: scanned - indexed, unscanned: total - scanned, truncated, capped: total > scanned };
@@ -134,12 +136,18 @@ export class HybridMemory {
       let eligible: ((row: any) => boolean) & { allowedIds?: number[] } = permissions ? await permissions() : () => true;
       this.acquireLease();
       const pending: any[] = [];
+      // Request-local, bounded reuse only. Each destination retains its own source
+      // permission/content checks; identical input does not authorize another row.
+      const reusable = new Map<string, Uint8Array>();
       const cap = Math.max(1, Math.min(100, Math.floor(limit)));
       for (const row of this.rows(undefined, eligible.allowedIds)) {
         if (!eligible(row) || !this.input(row).text.trim()) { skipped++; continue; }
         let valid = false;
         if (row.vector && row.inputHash === this.input(row).hash && row.dimensions === this.config.dimensions) {
-          try { cosineBlob(row.vector, this.config.dimensions); valid = true; } catch { /* Rebuild. */ }
+          try {
+            cosineBlob(row.vector, this.config.dimensions); valid = true;
+            if (reusable.size < 100) reusable.set(row.inputHash, row.vector);
+          } catch { /* Rebuild. */ }
         }
         if (!valid) pending.push({ ...row, vector: undefined });
         if (pending.length >= cap) break;
@@ -156,8 +164,13 @@ export class HybridMemory {
         });
         if (!batch.length) continue;
         const inputs = batch.map(row => this.input(row));
-        const vectors = await this.client.embed(inputs.map(x => x.text), this.controller.signal);
-        uploaded += batch.length;
+        const missing = new Map<string, string>();
+        for (const input of inputs) if (!reusable.has(input.hash)) missing.set(input.hash, input.text);
+        if (missing.size) {
+          const vectors = await this.client.embed([...missing.values()], this.controller.signal);
+          uploaded += missing.size;
+          [...missing.keys()].forEach((key, j) => reusable.set(key, encodeVector(vectors[j])));
+        }
         if (permissions) eligible = await permissions();
         this.acquireLease();
         // No async work inside this transaction. Recheck existence/content after HTTP.
@@ -167,7 +180,7 @@ export class HybridMemory {
           batch.forEach((row, j) => {
             const present = this.store.db.prepare("SELECT id,topic,summary FROM blocks WHERE id=? AND source_file=? AND block_id=?").get(row.id, row.sourceFile, row.blockId);
             if (!eligible(row) || !present || this.input(present).hash !== inputs[j].hash) { skipped++; return; }
-            this.store.db.prepare("INSERT OR REPLACE INTO memory_vectors VALUES (?,?,?,?,?,?)").run(row.id, this.ns, inputs[j].hash, this.config.dimensions, encodeVector(vectors[j]), Number(inputs[j].truncated));
+            this.store.db.prepare("INSERT OR REPLACE INTO memory_vectors VALUES (?,?,?,?,?,?)").run(row.id, this.ns, inputs[j].hash, this.config.dimensions, reusable.get(inputs[j].hash), Number(inputs[j].truncated));
             stored++;
             committed.push({ identity: hash(JSON.stringify([row.sourceFile, row.kind, row.blockId])), blockId: row.blockId, project: row.project, topic: row.topic,
               summary: inputs[j].text, truncated: inputs[j].truncated });
@@ -183,11 +196,11 @@ export class HybridMemory {
     const cancelled = () => ({ mode: "cancelled", rows: [], reason: "Memory search cancelled" });
     if (signal?.aborted) return cancelled();
     const limit = Math.max(1, Math.min(20, opts.limit ?? 6));
-    const lexical = this.store.search(query, { ...opts, limit: 20 });
+    const lexical = this.store.search(query, { ...opts, candidates: true, limit: CANDIDATE_LIMIT });
     const fallback = (reason: string, coverage?: unknown) => signal?.aborted ? cancelled() : ({ mode: "lexical-fallback",
       rows: this.valid() ? this.store.search(query, { ...opts, limit }).rows : [], reason, coverage });
     if (!query.trim()) return { mode: "empty", rows: [] };
-    if (!this.config.enabled) return { ...lexical, rows: lexical.rows.slice(0, limit) };
+    if (!this.config.enabled) return { ...lexical, rows: distinctRows(lexical.rows, limit) };
     if (this.searching) return fallback("Semantic search busy; keyword search used");
     this.searching = true;
     try {
@@ -213,14 +226,51 @@ export class HybridMemory {
         Object.assign(opts, await opts.refreshPolicy());
         if (!this.valid() || signal?.aborted) return cancelled();
         hasVectors = false;
+        let refreshedScanned = 0, refreshedYielded = false;
+        let candidate: any;
         for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
+          refreshedScanned++;
           if (row.vector && row.dimensions === this.config.dimensions && row.inputHash === this.input(row).hash) {
-            try { cosineBlob(row.vector, this.config.dimensions); hasVectors = true; break; } catch { /* Invalid. */ }
+            try { cosineBlob(row.vector, this.config.dimensions); hasVectors = true; candidate = row; break; } catch { /* Invalid. */ }
+          }
+          if (refreshedScanned % 32 === 0) {
+            refreshedYielded = true;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            if (!this.valid() || signal?.aborted) return cancelled();
           }
         }
+        // The second gate also yields. Reauthorize its one witness immediately
+        // before upload, without another asynchronous full scan or retry loop.
+        // Losing that witness safely falls back; an obsolete policy never
+        // justifies a query upload even if the eventual result would be empty.
+        if (hasVectors && refreshedYielded) {
+          Object.assign(opts, await opts.refreshPolicy());
+          if (!this.valid() || signal?.aborted) return cancelled();
+          const policy = sqlAuthorization(this.store.db, opts.allowedIds, opts.authorizedRows);
+          try {
+            const live = this.store.db.prepare(`SELECT b.topic,b.summary,v.input_hash AS inputHash,v.dimensions,v.vector
+              FROM blocks b JOIN sources s ON s.source_file=b.source_file
+              JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=?
+              WHERE b.id=? ${opts.project ? 'AND s.project=?' : ''} AND ${policy.sql}`)
+              .get(this.ns, candidate.id, ...(opts.project ? [opts.project] : []));
+            hasVectors = !!live && live.dimensions === this.config.dimensions && live.inputHash === this.input(live).hash;
+            if (hasVectors) { try { cosineBlob(live.vector, this.config.dimensions); } catch { hasVectors = false; } }
+          } finally { policy.dispose(); }
+        }
       }
-      if (!hasVectors) return fallback("No valid vectors in the authorized scope; keyword search used.",
-        this.scopedStatus(opts));
+      if (!hasVectors) {
+        const changesBefore = storeChanges(this.store.db);
+        const coverage = await this.scopedStatus(opts, signal);
+        if (!this.valid() || signal?.aborted) return cancelled();
+        const changed = storeChanges(this.store.db) !== changesBefore;
+        if (opts.refreshPolicy) Object.assign(opts, await opts.refreshPolicy());
+        if (!this.valid() || signal?.aborted) return cancelled();
+        // Coverage belongs to the counted authorization snapshot; a later policy
+        // can only narrow the returned evidence, not silently relabel the counters.
+        const sameTotal = this.scopedTotal(opts) === coverage.total;
+        return fallback("No valid vectors in the authorized scope; keyword search used.",
+          changed || !sameTotal ? undefined : coverage);
+      }
       const input = prepareText(query, this.config, this.redact).text;
       const combined = AbortSignal.any([this.controller.signal, ...(signal ? [signal] : [])]);
       const [q] = await this.client.embed([input], combined);
@@ -228,7 +278,7 @@ export class HybridMemory {
       if (opts.refreshPolicy) Object.assign(opts, await opts.refreshPolicy());
       if (!this.valid() || combined.aborted) return fallback("Embedding operation expired");
       const changesBefore = storeChanges(this.store.db);
-      const top: { row: any; score: number }[] = [];
+      const top: { row: any; score: number; key: string }[] = [];
       let scanned = 0, indexed = 0, truncated = 0;
       for (const row of this.rows(opts.project, opts.allowedIds, opts.authorizedRows)) {
         scanned++;
@@ -237,9 +287,12 @@ export class HybridMemory {
             const score = cosineBlob(row.vector, this.config.dimensions, q);
             indexed++; truncated += row.truncated ? 1 : 0;
             if (score >= this.config.minSimilarity) {
-              top.push({ row: { ...row, vector: undefined }, score });
+              const key = contentKey(row);
+              const previous = top.find(item => item.key === key);
+              if (previous) previous.row = distinctRows([previous.row, { ...row, vector: undefined }], 1)[0];
+              else top.push({ row: { ...row, vector: undefined }, score, key });
               top.sort((a, b) => b.score - a.score || a.row.id - b.row.id);
-              if (top.length > 20) top.pop();
+              if (top.length > CANDIDATE_LIMIT) top.pop();
             }
           } catch { /* Invalid vector remains pending. */ }
         }
@@ -261,14 +314,24 @@ export class HybridMemory {
       if (!this.valid() || combined.aborted) return fallback("Embedding operation expired");
       const finalPolicy = sqlAuthorization(this.store.db, opts.allowedIds, opts.authorizedRows);
       let liveSemantic: any[];
-      try { liveSemantic = semantic.flatMap(row => {
-        if (opts.allowedIds !== undefined && !opts.allowedIds.includes(row.id)) return [];
-        const present = this.store.db.prepare(`SELECT ${columns} FROM blocks b JOIN sources s ON s.source_file=b.source_file
-          WHERE b.id=? AND b.source_file=? AND b.block_id=? ${opts.project ? "AND s.project=?" : ""} AND ${finalPolicy.sql}`)
-          .get(row.id, row.sourceFile, row.blockId, ...(opts.project ? [opts.project] : []));
-        return present && this.input(present).hash === row.inputHash ? [present] : [];
-      }); } finally { finalPolicy.dispose(); }
-      const liveLexical = this.store.search(query, { ...opts, limit: 20 }).rows;
+      try {
+        const presentById = this.store.db.prepare(`SELECT ${columns}, v.input_hash AS inputHash, v.dimensions, v.vector
+          FROM blocks b JOIN sources s ON s.source_file=b.source_file
+          LEFT JOIN memory_native_metadata n ON n.block_id=b.id
+          JOIN memory_vectors v ON v.block_id=b.id AND v.namespace=?
+          WHERE b.id=? AND b.source_file=? AND b.block_id=? ${opts.project ? "AND s.project=?" : ""} AND ${finalPolicy.sql}`);
+        liveSemantic = semantic.flatMap(group => [group, ...(group.alternatives ?? [])].flatMap(row => {
+          if (opts.allowedIds !== undefined && !opts.allowedIds.includes(row.id)) return [];
+          const present = presentById.get(this.ns, row.id, row.sourceFile, row.blockId, ...(opts.project ? [opts.project] : []));
+          if (!present || present.summary !== row.summary || present.topic !== row.topic ||
+              present.inputHash !== row.inputHash || present.dimensions !== this.config.dimensions ||
+              this.input(present).hash !== row.inputHash) return [];
+          try { cosineBlob(present.vector, this.config.dimensions); } catch { return []; }
+          const { vector: _ignored, ...result } = present;
+          return [result];
+        }));
+      } finally { finalPolicy.dispose(); }
+      const liveLexical = this.store.search(query, { ...opts, candidates: true, limit: CANDIDATE_LIMIT }).rows;
       return { mode: "hybrid", rows: fuse(liveLexical, liveSemantic, limit), coverage,
         ...(changed ? { reason: "Store changed during semantic scan; coverage omitted" } : {}),
         queryTruncated: prepareText(query, this.config, this.redact).truncated };
